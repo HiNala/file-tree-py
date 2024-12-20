@@ -39,11 +39,11 @@ class FileScanner:
 
         try:
             for root, dirs, filenames in os.walk(directory):
-                current_depth = len(Path(root).relative_to(directory).parts)
-                
-                if max_depth is not None and current_depth > max_depth:
-                    logger.debug("Reached max depth at: %s", root)
-                    continue
+                if max_depth is not None:
+                    current_depth = len(Path(root).relative_to(directory).parts)
+                    if current_depth > max_depth:
+                        logger.debug("Reached max depth at: %s", root)
+                        continue
 
                 # Process files in current directory
                 for filename in filenames:
