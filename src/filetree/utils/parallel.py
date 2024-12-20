@@ -1,5 +1,6 @@
 """Parallel processing utilities for file tree operations."""
 import os
+import psutil
 import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -29,12 +30,79 @@ def compute_file_hash(file_path: Path) -> str:
         return ""
 
 class ParallelProcessor:
-    """Handles parallel processing of files."""
+    """Handles parallel processing of files with dynamic worker allocation."""
 
-    def __init__(self, num_workers: int = None):
-        """Initialize the processor with the specified number of workers."""
-        self.num_workers = num_workers or min(32, os.cpu_count() * 2)
-        logger.debug("Initialized ParallelProcessor with %d workers", self.num_workers)
+    def __init__(self, max_workers: int = None, min_workers: int = 2):
+        """Initialize the processor with dynamic worker allocation.
+        
+        Args:
+            max_workers: Maximum number of worker threads to use
+            min_workers: Minimum number of worker threads to maintain
+        """
+        self.max_workers = max_workers or min(32, os.cpu_count() * 2)
+        self.min_workers = min_workers
+        self._last_worker_count = None
+        logger.debug("Initialized ParallelProcessor with max %d workers", self.max_workers)
+
+    def _get_optimal_workers(self) -> int:
+        """Calculate the optimal number of workers based on system load.
+        
+        Returns:
+            int: Optimal number of worker threads
+        """
+        try:
+            # Get CPU metrics
+            cpu_count = os.cpu_count() or 4
+            cpu_load = psutil.cpu_percent() / 100
+            
+            # Get memory metrics
+            memory = psutil.virtual_memory()
+            memory_load = memory.percent / 100
+            
+            # Calculate optimal workers based on CPU and memory load
+            cpu_factor = 1 - cpu_load  # Reduce workers when CPU is busy
+            memory_factor = 1 - memory_load  # Reduce workers when memory is low
+            
+            # Combine factors (weighted average)
+            system_factor = (cpu_factor * 0.7) + (memory_factor * 0.3)
+            
+            # Calculate optimal workers
+            optimal_workers = max(
+                self.min_workers,
+                min(
+                    self.max_workers,
+                    int(cpu_count * system_factor * 2)  # Up to 2 threads per CPU core
+                )
+            )
+            
+            logger.debug(
+                "System load - CPU: %.1f%%, Memory: %.1f%%, Workers: %d",
+                cpu_load * 100,
+                memory_load * 100,
+                optimal_workers
+            )
+            
+            return optimal_workers
+            
+        except Exception as e:
+            logger.warning("Error calculating optimal workers: %s", e)
+            return self.max_workers  # Fall back to max workers on error
+
+    def _get_current_workers(self) -> int:
+        """Get the current optimal number of workers, with hysteresis to prevent rapid changes.
+        
+        Returns:
+            int: Number of worker threads to use
+        """
+        optimal = self._get_optimal_workers()
+        
+        # Apply hysteresis: only change if difference is significant
+        if self._last_worker_count is None:
+            self._last_worker_count = optimal
+        elif abs(optimal - self._last_worker_count) >= 2:  # Change if difference >= 2
+            self._last_worker_count = optimal
+            
+        return self._last_worker_count
 
     def compute_file_hash(self, file_path: Path) -> str:
         """Compute SHA-256 hash of a file."""
@@ -68,7 +136,11 @@ class ParallelProcessor:
         """Process files in parallel to compute their hashes."""
         hash_map = {}
         try:
-            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            # Get optimal worker count for this batch
+            num_workers = self._get_current_workers()
+            logger.debug("Processing %d files with %d workers", len(files), num_workers)
+            
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 # Process files in parallel and collect results
                 future_to_file = {
                     executor.submit(self.compute_file_hash, file_path): file_path

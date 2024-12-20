@@ -9,12 +9,26 @@ from unittest.mock import patch, MagicMock
 @pytest.fixture
 def processor():
     """Create a parallel processor instance for testing."""
-    return ParallelProcessor(num_workers=2)
+    return ParallelProcessor(max_workers=8, min_workers=1)
+
+@pytest.fixture
+def test_files():
+    """Create temporary test files."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        
+        # Create some test files
+        (root / "file1.txt").write_text("content1")
+        (root / "file2.txt").write_text("content2")
+        (root / "file3.txt").write_text("content3")
+        
+        yield root
 
 def test_processor_initialization():
     """Test parallel processor initialization."""
-    processor = ParallelProcessor(num_workers=4)
-    assert processor.num_workers == 4
+    processor = ParallelProcessor(max_workers=4)
+    assert processor.max_workers == 4
+    assert processor.min_workers == 2  # Default value
 
 def test_compute_file_hash(tmp_path):
     """Test computing file hash."""
@@ -96,3 +110,76 @@ def test_error_handling(processor):
     # Test with invalid file path
     results = processor.process_files({Path("nonexistent.txt")})
     assert results == {}
+
+def test_dynamic_worker_allocation(processor):
+    """Test that worker count adjusts based on system load."""
+    # Mock system metrics
+    with patch('psutil.cpu_percent', return_value=50.0), \
+         patch('psutil.virtual_memory') as mock_memory, \
+         patch('os.cpu_count', return_value=4):
+        
+        # Mock memory metrics
+        mock_memory.return_value = MagicMock(
+            percent=60.0,  # 60% memory usage
+        )
+        
+        # Get worker count
+        workers = processor._get_optimal_workers()
+        
+        # With 50% CPU load and 60% memory usage:
+        # CPU factor = 1 - 0.5 = 0.5
+        # Memory factor = 1 - 0.6 = 0.4
+        # System factor = (0.5 * 0.7) + (0.4 * 0.3) = 0.47
+        # Expected workers = min(8, 4 * 0.47 * 2) ≈ 3.76
+        assert 3 <= workers <= 4, f"Expected 3-4 workers, got {workers}"
+
+def test_worker_hysteresis(processor):
+    """Test that worker count doesn't change for small load variations."""
+    with patch('psutil.cpu_percent') as mock_cpu, \
+         patch('psutil.virtual_memory') as mock_memory, \
+         patch('os.cpu_count', return_value=4):
+        
+        # Initial state: moderate load
+        mock_cpu.return_value = 50.0
+        mock_memory.return_value = MagicMock(percent=50.0)
+        initial_workers = processor._get_current_workers()
+        
+        # Small load change
+        mock_cpu.return_value = 55.0  # Small 5% increase
+        mock_memory.return_value = MagicMock(percent=55.0)
+        new_workers = processor._get_current_workers()
+        
+        # Worker count should remain stable
+        assert new_workers == initial_workers, "Worker count changed with small load variation"
+        
+        # Large load change
+        mock_cpu.return_value = 90.0  # Large increase
+        mock_memory.return_value = MagicMock(percent=90.0)
+        new_workers = processor._get_current_workers()
+        
+        # Worker count should decrease
+        assert new_workers <= 2, "Worker count didn't decrease with high load"
+
+def test_minimum_workers(processor):
+    """Test that worker count never goes below minimum."""
+    with patch('psutil.cpu_percent', return_value=100.0), \
+         patch('psutil.virtual_memory') as mock_memory, \
+         patch('os.cpu_count', return_value=4):
+        
+        # Simulate very high system load
+        mock_memory.return_value = MagicMock(percent=100.0)
+        
+        workers = processor._get_optimal_workers()
+        assert workers >= processor.min_workers, "Worker count went below minimum"
+
+def test_maximum_workers(processor):
+    """Test that worker count never exceeds maximum."""
+    with patch('psutil.cpu_percent', return_value=0.0), \
+         patch('psutil.virtual_memory') as mock_memory, \
+         patch('os.cpu_count', return_value=32):
+        
+        # Simulate very low system load
+        mock_memory.return_value = MagicMock(percent=0.0)
+        
+        workers = processor._get_optimal_workers()
+        assert workers <= processor.max_workers, "Worker count exceeded maximum"

@@ -8,6 +8,7 @@ setup(
     package_dir={"": "src"},
     install_requires=[
         "rich>=10.0.0",
+        "psutil>=5.9.0",
     ],
     entry_points={
         "console_scripts": [
