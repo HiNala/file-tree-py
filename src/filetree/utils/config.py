@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
+from .env import env_config
 
 @dataclass
 class FileTreeConfig:
@@ -10,6 +11,10 @@ class FileTreeConfig:
     ignore_patterns: list[str] = None
     file_annotations: Dict[str, str] = None
     debug_mode: bool = False
+    max_depth: int = 10
+    include_hidden: bool = False
+    output_format: str = 'tree'
+    color_output: bool = True
     
     @classmethod
     def from_file(cls, config_path: Path) -> 'FileTreeConfig':
@@ -23,16 +28,11 @@ class FileTreeConfig:
             return cls()
     
     @classmethod
-    def default(cls) -> 'FileTreeConfig':
-        """Create default configuration."""
+    def from_env(cls) -> 'FileTreeConfig':
+        """Create configuration from environment variables."""
         return cls(
-            similarity_threshold=0.8,
-            ignore_patterns=[
-                "__pycache__",
-                "*.pyc",
-                ".git",
-                "node_modules",
-            ],
+            similarity_threshold=0.8,  # This could be added to env vars if needed
+            ignore_patterns=env_config.get_exclude_patterns(),
             file_annotations={
                 ".py": "[yellow](Python)[/yellow]",
                 ".md": "[green](Markdown)[/green]",
@@ -40,5 +40,14 @@ class FileTreeConfig:
                 ".yml": "[blue](YAML)[/blue]",
                 ".txt": "[white](Text)[/white]",
             },
-            debug_mode=False
-        ) 
+            debug_mode=env_config.get_debug_mode(),
+            max_depth=env_config.get_max_depth(),
+            include_hidden=env_config.get_include_hidden(),
+            output_format=env_config.get_output_format(),
+            color_output=env_config.get_color_output()
+        )
+    
+    @classmethod
+    def default(cls) -> 'FileTreeConfig':
+        """Create default configuration."""
+        return cls.from_env()  # Now using environment-based configuration by default
