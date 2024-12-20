@@ -38,54 +38,84 @@ class FileScanner:
             logger.error("Error checking path exclusion: %s", e)
             return False
 
-    def _scan_directory(self, directory: Path, max_depth: int = None) -> Set[Path]:
-        """Recursively scan a directory for files."""
-        logger.debug("Scanning directory: %s (max_depth=%s)", directory, max_depth)
-        files = set()
-        current_depth = 0
-
+    def _scan_directory(self, directory: Path, max_depth: int = None, current_depth: int = 0) -> Set[Path]:
+        """Scan a directory for files, respecting max depth and exclusion patterns."""
         try:
-            for root, dirs, filenames in os.walk(directory):
-                if max_depth is not None:
-                    current_depth = len(Path(root).relative_to(directory).parts)
-                    if current_depth > max_depth:
-                        logger.debug("Reached max depth at: %s", root)
-                        continue
+            if max_depth is not None and current_depth > max_depth:
+                return set()
 
-                # Process files in current directory
-                for filename in filenames:
-                    file_path = Path(root) / filename
-                    if not self._should_exclude(file_path):
-                        logger.debug("Found file: %s", file_path)
+            files = set()
+            for file_path in directory.iterdir():
+                if not self._should_exclude(file_path):
+                    if file_path.is_file():
                         files.add(file_path)
+                        # Update file type statistics
+                        ext = file_path.suffix.lower() or "no_extension"
+                        self.file_type_stats[ext] = self.file_type_stats.get(ext, 0) + 1
+                        
+                        # Track file size statistics
+                        size = file_path.stat().st_size
+                        if size > 100 * 1024 * 1024:  # 100MB
+                            self.large_files.append({
+                                "path": str(file_path),
+                                "size": size
+                            })
+                            
+                    elif file_path.is_dir():
+                        # Update depth statistics
+                        path_depth = len(file_path.parts)
+                        self.max_depth = max(self.max_depth, path_depth)
+                        if path_depth > 5:  # Track paths deeper than 5 levels
+                            self.deep_paths.append(str(file_path))
+                            
+                        # Recursively scan subdirectories
+                        files.update(self._scan_directory(file_path, max_depth, current_depth + 1))
 
-                # Filter directories based on exclusion patterns
-                dirs[:] = [d for d in dirs if not self._should_exclude(Path(root) / d)]
-
+            return files
         except Exception as e:
-            logger.error("Error scanning directory %s: %s", directory, e, exc_info=True)
-            raise
+            logger.error("Error scanning directory %s: %s", directory, e)
+            return set()
 
-        logger.debug("Found %d files in directory %s", len(files), directory)
-        return files
-
-    def find_duplicates(self, directory: Path) -> Dict[str, List[Path]]:
+    def find_duplicates(self, directory: Path) -> Dict[str, List[str]]:
         """Find duplicate files in the given directory."""
-        logger.debug("Starting duplicate file search in: %s", directory)
-        
         try:
-            # Scan directory for files
-            files = self._scan_directory(directory, self.config.max_depth)
-            logger.debug("Found %d total files to process", len(files))
+            # Initialize statistics
+            self.file_type_stats = {}
+            self.large_files = []
+            self.max_depth = 0
+            self.deep_paths = []
+            self.total_size = 0
+            self.hidden_files = 0
 
-            # Process files in parallel to find duplicates
+            logger.debug("Starting duplicate file search in: %s", directory)
+            files = self._scan_directory(directory, self.config.max_depth)
+            logger.debug("Found %d files in directory %s", len(files), directory)
+
+            if not files:
+                return {}
+
+            # Calculate average depth
+            total_depth = sum(len(Path(p).parts) for p in self.deep_paths)
+            avg_depth = total_depth / len(self.deep_paths) if self.deep_paths else 0
+
+            # Update statistics in the processor
+            self.processor.statistics = {
+                "file_types": self.file_type_stats,
+                "large_files": self.large_files,
+                "depth_stats": {
+                    "max_depth": self.max_depth,
+                    "avg_depth": avg_depth,
+                    "deep_paths": sorted(self.deep_paths)[:5]  # Keep only top 5 deepest paths
+                }
+            }
+
+            # Find duplicates using parallel processing
             duplicates = self.processor.find_duplicates(files)
             logger.debug("Found %d groups of duplicate files", len(duplicates))
-
             return duplicates
 
         except Exception as e:
-            logger.error("Error finding duplicates: %s", e, exc_info=True)
+            logger.error("Error finding duplicates: %s", e)
             raise
 
     def scan_directory(self, directory: Path) -> List[Path]:
