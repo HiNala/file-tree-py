@@ -30,9 +30,14 @@ def test_cli_export(mock_file_tree, temp_dir):
     with open(export_file) as f:
         results = json.load(f)
     
-    assert "duplicates" in results
-    assert "similar_routes" in results
-    assert "stats" in results
+    # Check for summary information
+    assert "summary" in results
+    assert "total_groups" in results["summary"]
+    assert "total_duplicates" in results["summary"]
+    assert "total_wasted_space" in results["summary"]
+    
+    # Check for at least one hash key (representing duplicates)
+    assert any(key != "summary" for key in results.keys())
 
 def test_cli_with_config(mock_file_tree, mock_config_file):
     """Test CLI with configuration file."""

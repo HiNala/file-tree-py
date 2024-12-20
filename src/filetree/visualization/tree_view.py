@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Set
 from rich.tree import Tree
 from rich.style import Style
+import json
 
 class FileTreeVisualizer:
     """Visualize file tree structure."""
@@ -11,6 +12,31 @@ class FileTreeVisualizer:
         self.duplicate_style = Style(color="red")
         self.symlink_style = Style(color="cyan")
         self.directory_style = Style(color="blue", bold=True)
+
+    def export_results(self, duplicates: Dict[str, List[Path]], export_path: Path) -> None:
+        """Export duplicate file information to JSON.
+        
+        Args:
+            duplicates: Dictionary mapping hash values to lists of duplicate file paths
+            export_path: Path to export the results to
+        """
+        # Convert Path objects to strings for JSON serialization
+        export_data = {
+            hash_value: [str(path) for path in paths]
+            for hash_value, paths in duplicates.items()
+        }
+        
+        # Add summary information
+        export_data["summary"] = {
+            "total_groups": len(duplicates),
+            "total_duplicates": sum(len(paths) - 1 for paths in duplicates.values()),
+            "total_wasted_space": sum(Path(paths[0]).stat().st_size * (len(paths) - 1) 
+                                    for paths in duplicates.values() if paths)
+        }
+        
+        # Write to file
+        with open(export_path, 'w') as f:
+            json.dump(export_data, f, indent=2)
 
     def create_tree(self, root_path: Path, duplicates: Dict[str, List[Path]] = None) -> Tree:
         """Create a tree visualization of the directory structure."""

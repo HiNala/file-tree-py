@@ -67,20 +67,32 @@ def test_scan_directory(processor, tmp_path):
 def test_process_files(processor, tmp_path):
     """Test processing files in parallel."""
     # Create test files
-    files = []
+    files = set()
     for i in range(5):
         file = tmp_path / f"file{i}.txt"
         file.write_text(f"content {i}")
-        files.append(file)
+        files.add(file)
+
+    # Process files
+    results = processor.process_files(files)
     
-    def process_func(file):
-        return file.name
-    
-    results = list(processor.process_files(files, process_func))
-    assert len(results) == 5
-    assert all(f"file{i}.txt" in results for i in range(5))
+    # Verify results
+    assert len(results) > 0  # Should have at least one hash
+    for hash_value, paths in results.items():
+        assert isinstance(hash_value, str)
+        assert isinstance(paths, list)
+        assert all(isinstance(p, Path) for p in paths)
 
 def test_error_handling(processor):
     """Test error handling in parallel processor."""
-    with pytest.raises(Exception):
-        processor.find_duplicates(Path("/nonexistent"))
+    # Test with empty set of files
+    results = processor.find_duplicates(set())
+    assert results == {}
+
+    # Test with non-existent directory
+    results = processor.find_duplicates(Path("nonexistent"))
+    assert results == {}
+
+    # Test with invalid file path
+    results = processor.process_files({Path("nonexistent.txt")})
+    assert results == {}

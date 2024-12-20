@@ -9,7 +9,7 @@ from .utils.config import FileTreeConfig
 from .utils.report import AnalysisReport
 import sys
 from typing import Dict, List
-from .interactive import handle_interactive
+from .interactive import interactive_mode
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -42,29 +42,43 @@ def display_results(duplicates: Dict[str, List[str]], interactive: bool = False)
 
     total_groups = len(duplicates)
     total_duplicates = sum(len(paths) - 1 for paths in duplicates.values())
-    total_size = sum(Path(paths[0]).stat().st_size * (len(paths) - 1) for paths in duplicates.values())
+    
+    # Calculate total size safely
+    total_size = 0
+    for paths in duplicates.values():
+        try:
+            if paths:  # Check if there are any paths
+                file_size = Path(paths[0]).stat().st_size
+                total_size += file_size * (len(paths) - 1)
+        except (OSError, FileNotFoundError):
+            # Skip files that can't be accessed
+            continue
 
     # Display summary
     console.print("\n[bold cyan]📊 Analysis Summary[/bold cyan]")
-    console.print(f"[cyan]Found {total_groups} groups of duplicate files[/cyan]")
-    console.print(f"[cyan]Total duplicate files: {total_duplicates}[/cyan]")
+    console.print(f"\nFound [bold]{total_groups}[/bold] groups of duplicate files")
+    console.print(f"Total duplicate files: {total_duplicates}")
     console.print(f"[cyan]Wasted space: {format_size(total_size)}[/cyan]\n")
 
     if interactive:
         console.print("[bold yellow]🔍 Interactive Mode[/bold yellow]")
         console.print("Review each group of duplicates and choose actions.\n")
-        handle_interactive(duplicates)
+        interactive_mode(duplicates)
     else:
         # Show preview of duplicates
         console.print("[bold green]🗂️  Duplicate File Groups Preview[/bold green]")
         console.print("Showing first 5 groups (use -i for interactive mode)\n")
         
         for i, (hash_value, paths) in enumerate(list(duplicates.items())[:5]):
-            size = Path(paths[0]).stat().st_size
-            console.print(f"[bold]Group {i+1}[/bold] ({format_size(size)} each):")
-            for path in paths:
-                console.print(f"  [blue]• {path}[/blue]")
-            console.print()
+            try:
+                size = Path(paths[0]).stat().st_size if paths else 0
+                console.print(f"[bold]Group {i+1}[/bold] ({format_size(size)} each):")
+                for path in paths:
+                    console.print(f"  • {path}")
+                console.print()
+            except (OSError, FileNotFoundError):
+                # Skip groups where files can't be accessed
+                continue
 
         if len(duplicates) > 5:
             remaining = len(duplicates) - 5
@@ -224,12 +238,14 @@ Examples:
             if any(len(p) > 1 for p in duplicates.values()):
                 report.add_recommendation("Review duplicate files to free up disk space")
 
+        # Initialize visualizer
+        visualizer = FileTreeVisualizer()
+
         # Display results
         display_results(duplicates, parsed_args.interactive)
 
         # Generate tree view
         if not parsed_args.no_tree:
-            visualizer = FileTreeVisualizer()
             tree = visualizer.create_tree(directory, duplicates)
             console.print(tree)
 
@@ -251,7 +267,7 @@ Examples:
         return 130
     except Exception as e:
         logger.error("An error occurred", exc_info=True)
-        console.print(f"[red]Error: {str(e)}[/red]")
+        console.print(f"\n[red]Error: {str(e)}[/red]")
         return 1
 
 if __name__ == "__main__":

@@ -45,7 +45,9 @@ def test_display_results_with_duplicates(mock_console):
     }
     with patch("filetree.cli.console", mock_console):
         display_results(duplicates)
-        mock_console.print.assert_any_call("\nFound [bold]2[/bold] groups of duplicate files.")
+
+    mock_console.print.assert_any_call("\n[bold cyan]📊 Analysis Summary[/bold cyan]")
+    mock_console.print.assert_any_call(f"\nFound [bold]2[/bold] groups of duplicate files")
 
 def test_main_invalid_directory(mock_console):
     """Test main with invalid directory."""
@@ -83,8 +85,8 @@ def test_main_with_duplicates(mock_console, test_directory):
             main()
 
     # Verify that the correct messages were printed
-    mock_console.print.assert_any_call("\nFound [bold]2[/bold] groups of duplicate files.")
-    mock_console.print.assert_any_call("\n[blue]Tip: Use --interactive (-i) to manage duplicates.[/blue]")
+    mock_console.print.assert_any_call(f"\nFound [bold]2[/bold] groups of duplicate files")
+    mock_console.print.assert_any_call("\n[yellow]💡 Tip: Use --interactive (-i) flag to manage duplicate files[/yellow]")
 
 @patch('filetree.cli.console')
 def test_main_custom_workers(mock_console, test_directory):

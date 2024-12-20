@@ -2,9 +2,9 @@
 import os
 import hashlib
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterator, Tuple, Set
+from typing import List, Dict, Callable, Any, Iterator, Tuple, Set, Union
 from .env import env_config
 from collections import defaultdict
 
@@ -29,99 +29,102 @@ def compute_file_hash(file_path: Path) -> str:
         return ""
 
 class ParallelProcessor:
-    """Process files in parallel using a thread pool."""
+    """Handles parallel processing of files."""
 
     def __init__(self, num_workers: int = None):
-        """Initialize processor with number of worker threads."""
-        self.num_workers = num_workers or (4)  # Default to 4 workers
-        logger.debug(f"Initialized ParallelProcessor with {self.num_workers} workers")
-
-    def process_files(self, files: List[Path], process_func: Callable[[Path], Any]) -> Iterator[Any]:
-        """Process files in parallel using the provided function."""
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            yield from executor.map(process_func, files)
-
-    def find_duplicates(self, directory: Path) -> Dict[str, List[Path]]:
-        """Find duplicate files in directory."""
-        files = list(self.scan_directory(directory))
-        logger.debug(f"Looking for duplicates in {len(files)} files")
-
-        # Group files by hash
-        hash_map: Dict[str, List[Path]] = {}
-        for file_path in files:
-            file_hash = compute_file_hash(file_path)
-            if file_hash:
-                if file_hash not in hash_map:
-                    hash_map[file_hash] = []
-                hash_map[file_hash].append(file_path)
-
-        # Filter out unique files
-        duplicates = {h: paths for h, paths in hash_map.items() if len(paths) > 1}
-        logger.debug(f"Found {len(duplicates)} groups of duplicates")
-        return duplicates
-
-    def scan_directory(self, directory: Path) -> List[Path]:
-        """Scan directory for files."""
-        if not directory.exists():
-            logger.error(f"Directory not found: {directory}")
-            raise FileNotFoundError(f"Directory not found: {directory}")
-
-        try:
-            files = []
-            for item in directory.rglob("*"):
-                if item.is_file():
-                    files.append(item)
-            return files
-        except Exception as e:
-            logger.error(f"Error scanning directory {directory}: {e}")
-            return []
+        """Initialize the processor with the specified number of workers."""
+        self.num_workers = num_workers or min(32, os.cpu_count() * 2)
+        logger.debug("Initialized ParallelProcessor with %d workers", self.num_workers)
 
     def compute_file_hash(self, file_path: Path) -> str:
-        """Compute SHA256 hash of a file in chunks."""
-        logger.debug("Computing hash for file: %s", file_path)
+        """Compute SHA-256 hash of a file."""
         try:
             hasher = hashlib.sha256()
             with open(file_path, 'rb') as f:
-                while chunk := f.read(8192):  # Read in 8KB chunks
+                for chunk in iter(lambda: f.read(4096), b''):
                     hasher.update(chunk)
             file_hash = hasher.hexdigest()
-            logger.debug("Hash computed for %s: %s", file_path, file_hash[:8])
+            logger.debug("Hash computed for %s: %s...", file_path, file_hash[:8])
             return file_hash
         except Exception as e:
-            logger.error("Error computing hash for %s: %s", file_path, e, exc_info=True)
-            raise
+            logger.error("Error computing hash for %s: %s", file_path, e)
+            return None
+
+    def scan_directory(self, directory: Path) -> Set[Path]:
+        """Scan a directory for files."""
+        try:
+            files = set()
+            for root, _, filenames in os.walk(directory):
+                for filename in filenames:
+                    file_path = Path(root) / filename
+                    if file_path.is_file():
+                        files.add(file_path)
+            return files
+        except Exception as e:
+            logger.error("Error scanning directory %s: %s", directory, e)
+            return set()
 
     def process_files(self, files: Set[Path]) -> Dict[str, List[Path]]:
         """Process files in parallel to compute their hashes."""
-        logger.debug("Processing %d files in parallel", len(files))
-        hash_map: Dict[str, List[Path]] = {}
+        hash_map = {}
+        try:
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                # Process files in parallel and collect results
+                future_to_file = {
+                    executor.submit(self.compute_file_hash, file_path): file_path
+                    for file_path in files
+                }
 
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            future_to_path = {executor.submit(self.compute_file_hash, path): path for path in files}
-            
-            for future in as_completed(future_to_path):
-                path = future_to_path[future]
-                try:
-                    file_hash = future.result()
-                    if file_hash not in hash_map:
-                        hash_map[file_hash] = []
-                    hash_map[file_hash].append(path)
-                    logger.debug("Added file to hash map: %s -> %s", path, file_hash[:8])
-                except Exception as e:
-                    logger.error("Error processing file %s: %s", path, e)
+                # Collect results as they complete
+                for future in future_to_file:
+                    file_path = future_to_file[future]
+                    try:
+                        file_hash = future.result()
+                        if file_hash:
+                            if file_hash not in hash_map:
+                                hash_map[file_hash] = []
+                            hash_map[file_hash].append(file_path)
+                    except Exception as e:
+                        logger.error("Error processing %s: %s", file_path, e)
 
-        logger.debug("Processed all files, found %d unique hashes", len(hash_map))
+        except Exception as e:
+            logger.error("Error in parallel processing: %s", e)
+
         return hash_map
 
-    def find_duplicates(self, files: Set[Path]) -> Dict[str, List[Path]]:
-        """Find duplicate files based on their content hash."""
+    def find_duplicates(self, path_or_files: Union[Path, Set[Path]]) -> Dict[str, List[Path]]:
+        """Find duplicate files based on their content hash.
+
+        Args:
+            path_or_files: Either a directory path to scan or a set of files to process
+        """
+        if isinstance(path_or_files, Path):
+            files = self.scan_directory(path_or_files)
+        else:
+            files = path_or_files
+
         logger.debug("Finding duplicates among %d files", len(files))
-        
+
         # Process files to get hash map
         hash_map = self.process_files(files)
-        
+
         # Filter out unique files
         duplicates = {h: paths for h, paths in hash_map.items() if len(paths) > 1}
-        logger.debug("Found %d groups of duplicate files", len(duplicates))
-        
         return duplicates
+
+    def scan_and_report(self, directory: Path) -> Dict[str, List[Path]]:
+        """Scan directory and report duplicate files."""
+        try:
+            if not directory.exists():
+                logger.error("Directory not found: %s", directory)
+                return {}
+
+            if not directory.is_dir():
+                logger.error("Path is not a directory: %s", directory)
+                return {}
+
+            return self.find_duplicates(directory)
+
+        except Exception as e:
+            logger.error("Error scanning directory: %s", e)
+            return {}

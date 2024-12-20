@@ -38,7 +38,13 @@ def test_find_duplicates(scanner, tmp_path):
     duplicates = scanner.find_duplicates(tmp_path)
     assert len(duplicates) == 1
     assert len(duplicates["hash1"]) == 2
-    mock_processor.find_duplicates.assert_called_once_with(tmp_path)
+    
+    # The processor's find_duplicates should be called with a set containing both files
+    expected_files = {file1, file2}
+    mock_processor.find_duplicates.assert_called_once()
+    actual_files = mock_processor.find_duplicates.call_args[0][0]
+    assert isinstance(actual_files, set)
+    assert actual_files == expected_files
 
 def test_scan_directory(scanner, tmp_path):
     """Test scanning directory."""
@@ -48,23 +54,13 @@ def test_scan_directory(scanner, tmp_path):
     file1.write_text("content1")
     file2.write_text("content2")
 
-    # Mock the parallel processor
-    mock_processor = MagicMock()
-    mock_processor.scan_directory.return_value = [file1, file2]
-    scanner.processor = mock_processor
-
     files = scanner.scan_directory(tmp_path)
     assert len(files) == 2
     assert file1 in files
     assert file2 in files
-    mock_processor.scan_directory.assert_called_once_with(tmp_path)
 
 def test_scanner_error_handling(scanner):
     """Test error handling in scanner."""
-    mock_processor = MagicMock()
-    mock_processor.find_duplicates.side_effect = Exception("Test error")
-    scanner.processor = mock_processor
-
-    with pytest.raises(Exception) as exc_info:
-        scanner.find_duplicates(Path("/nonexistent"))
-    assert str(exc_info.value) == "Test error"
+    # Test with non-existent directory
+    duplicates = scanner.find_duplicates(Path("\\nonexistent"))
+    assert duplicates == {}
