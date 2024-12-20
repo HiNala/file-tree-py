@@ -38,27 +38,35 @@ COLOR_OUTPUT=True
 
 ## Usage
 
-Basic usage:
+### Basic Usage
 ```bash
-python -m filetree.cli /path/to/directory
+python main.py /path/to/directory
 ```
 
-This will scan the directory and show any duplicate files found.
+### Interactive Mode
+```bash
+python main.py -i /path/to/directory
+```
+
+### Custom Worker Count
+```bash
+python main.py -w 4 /path/to/directory
+```
+
+This will scan the directory and show any duplicate files found. Use the `-i` flag to enter interactive mode for managing duplicates and directories.
 
 ## Features
 
 Current features:
-- Recursive directory scanning
+- Recursive directory scanning with parallel processing
 - Duplicate file detection using SHA256 hashing
 - Rich console output with colored formatting
 - Environment-based configuration
 - Customizable visualization options
-
-Coming soon:
-- Directory structure visualization
-- Duplicate route detection
-- Context-specific suggestions
-- Export to JSON/YAML
+- Interactive file management:
+  - Resolve duplicates
+  - Merge directories
+  - Rename files/directories
 
 ## Configuration Options
 
@@ -72,3 +80,13 @@ Coming soon:
 | INCLUDE_HIDDEN | Include hidden files and directories | False |
 | OUTPUT_FORMAT | Output format (tree, json, yaml) | tree |
 | COLOR_OUTPUT | Enable colored output | True |
+
+## Development
+
+### Running Tests
+```bash
+pytest tests/
+```
+
+### Code Style
+The project follows PEP 8 guidelines. Before committing, ensure your code is properly formatted.
