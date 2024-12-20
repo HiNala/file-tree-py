@@ -2,65 +2,94 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-class FileTreeConfig:
+@dataclass
+class Config:
     """Configuration for file tree analysis."""
 
-    def __init__(self, 
-                 similarity_threshold: float = 0.8,
-                 ignore_patterns: List[str] = None,
-                 file_annotations: dict = None,
-                 num_workers: int = None,
-                 max_depth: int = None,
-                 include_hidden: bool = False,
-                 debug_mode: bool = False):
-        """Initialize configuration with default values."""
-        self.similarity_threshold = similarity_threshold
-        self.ignore_patterns = ignore_patterns or ["__pycache__", "*.pyc", "*.pyo", "*.pyd", "node_modules", ".git"]
-        self.file_annotations = file_annotations or {
-            ".py": "[yellow](Python)[/yellow]",
-            ".js": "[yellow](JavaScript)[/yellow]",
-            ".html": "[blue](HTML)[/blue]",
-            ".css": "[blue](CSS)[/blue]",
-            ".md": "[green](Markdown)[/green]",
-            ".json": "[yellow](JSON)[/yellow]",
-        }
-        self.num_workers = num_workers if num_workers is not None else os.cpu_count()
-        self.max_depth = max_depth  # None means no depth limit
-        self.include_hidden = include_hidden  # Whether to include hidden files and directories
-        self.debug_mode = debug_mode
+    # File patterns to ignore
+    ignore_patterns: List[str] = field(default_factory=lambda: [
+        "*.egg",
+        "*.egg-info",
+        "*.pyc",
+        "__pycache__",
+        "*.git",
+        "*.svn",
+        "*.hg",
+        "*.DS_Store",
+        "node_modules",
+        "venv",
+        ".env",
+        ".venv",
+        "build",
+        "dist",
+        "*.tmp",
+        "*.temp",
+        "*.swp",
+        "*.bak",
+        "Thumbs.db"
+    ])
 
-    def __str__(self) -> str:
-        """Return a string representation of the configuration."""
-        return (
-            f"FileTreeConfig(similarity_threshold={self.similarity_threshold}, "
-            f"num_workers={self.num_workers}, max_depth={self.max_depth}, "
-            f"include_hidden={self.include_hidden}, debug_mode={self.debug_mode})"
-        )
+    # Whether to follow symbolic links
+    follow_symlinks: bool = False
+
+    # Minimum file size to consider (in bytes)
+    min_file_size: int = 1
+
+    # Maximum depth for directory traversal (None for unlimited)
+    max_depth: int = None
+
+    # Whether to include hidden files
+    include_hidden: bool = False
+
+    # Whether to use color output
+    use_color: bool = True
+
+    # Output format (text, json, or markdown)
+    output_format: str = "text"
 
     @classmethod
-    def default(cls) -> "FileTreeConfig":
-        """Create a configuration with default values."""
-        return cls()
-
-    @classmethod
-    def from_file(cls, config_file: Path) -> "FileTreeConfig":
+    def from_file(cls, config_file: Path) -> "Config":
         """Load configuration from a JSON file."""
         try:
-            if config_file is None:
-                return cls.default()
-            
-            config_file = Path(config_file)
-            if not config_file.exists():
-                logger.warning(f"Config file {config_file} not found, using defaults")
-                return cls.default()
-                
             with open(config_file) as f:
                 config_data = json.load(f)
             return cls(**config_data)
         except Exception as e:
-            logger.error(f"Error loading config from {config_file}: {e}")
-            return cls.default()
+            raise Exception(f"Error loading configuration from {config_file}: {str(e)}")
+
+    def to_file(self, config_file: Path) -> None:
+        """Save configuration to a JSON file."""
+        try:
+            config_data = {
+                "ignore_patterns": self.ignore_patterns,
+                "follow_symlinks": self.follow_symlinks,
+                "min_file_size": self.min_file_size,
+                "max_depth": self.max_depth,
+                "include_hidden": self.include_hidden,
+                "use_color": self.use_color,
+                "output_format": self.output_format
+            }
+            with open(config_file, "w") as f:
+                json.dump(config_data, f, indent=4)
+        except Exception as e:
+            raise Exception(f"Error saving configuration to {config_file}: {str(e)}")
+
+    def update(self, **kwargs) -> None:
+        """Update configuration with new values."""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            else:
+                raise ValueError(f"Invalid configuration option: {key}")
+
+    def get_ignore_patterns(self) -> List[str]:
+        """Get list of ignore patterns."""
+        patterns = self.ignore_patterns.copy()
+        if not self.include_hidden:
+            patterns.extend([".*", ".*/*"])
+        return patterns

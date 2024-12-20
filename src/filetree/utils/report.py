@@ -1,121 +1,137 @@
-"""Module for generating detailed analysis reports."""
-from datetime import datetime
+"""Report generation module."""
 from pathlib import Path
-from typing import Dict, List
-import json
+from typing import Dict, List, Optional
+from rich.console import Console
+from rich.table import Table
+from rich.markdown import Markdown
+from rich.progress import track
 
-class AnalysisReport:
-    """Generate detailed analysis reports."""
+from ..core.duplicates import DuplicateFinder
+from ..core.scanner import FileTreeScanner
+from .config import Config
 
-    def __init__(self, directory: Path):
+class ReportGenerator:
+    """Generator for file tree analysis reports."""
+
+    def __init__(self):
         """Initialize report generator."""
-        self.directory = directory
-        self.timestamp = datetime.now()
-        self.findings = []
-        self.statistics = {
-            "total_files": 0,
-            "total_size": 0,
-            "duplicate_groups": 0,
-            "wasted_space": 0,
-            "hidden_files": 0,
-            "large_files": [],
-            "file_types": {},
-            "depth_stats": {
-                "max_depth": 0,
-                "avg_depth": 0,
-                "deep_paths": []
-            }
-        }
-        self.recommendations = []
+        self.console = Console()
 
-    def add_finding(self, category: str, message: str, severity: str = "info"):
-        """Add a finding to the report."""
-        icon = {
-            "error": "❌",
-            "warning": "⚠️",
-            "info": "ℹ️",
-            "success": "✅"
-        }.get(severity, "ℹ️")
+    def _format_size(self, size: int) -> str:
+        """Format size in bytes to human readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} PB"
+
+    def _generate_ascii_bar(self, value: int, max_value: int, width: int = 20) -> str:
+        """Generate ASCII progress bar."""
+        filled = int(width * (value / max_value)) if max_value > 0 else 0
+        return f"[{'=' * filled}{' ' * (width - filled)}]"
+
+    def _generate_summary(self, files: List[Path], duplicates: Dict[str, List[Path]]) -> str:
+        """Generate summary section of the report."""
+        total_files = len(files)
+        total_size = sum(p.stat().st_size for p in files if p.exists())
+        duplicate_stats = DuplicateFinder().get_duplicate_stats(duplicates)
+
+        summary = [
+            "# 📊 File Tree Analysis Report",
+            "\n## 📈 Summary",
+            f"\n- Total Files: {total_files:,}",
+            f"- Total Size: {self._format_size(total_size)}",
+            f"- Duplicate Groups: {duplicate_stats['total_groups']:,}",
+            f"- Total Duplicates: {duplicate_stats['total_duplicates']:,}",
+            f"- Wasted Space: {self._format_size(duplicate_stats['wasted_space'])}"
+        ]
+        return "\n".join(summary)
+
+    def _generate_file_type_distribution(self, files: List[Path]) -> str:
+        """Generate file type distribution section."""
+        scanner = FileTreeScanner(Config())
+        type_dist = scanner.get_file_types(files)
         
-        self.findings.append({
-            "category": category,
-            "message": message,
-            "severity": severity,
-            "icon": icon
-        })
+        if not type_dist:
+            return "\n## 📁 File Type Distribution\n\nNo files found."
+            
+        total_files = sum(type_dist.values())
+        max_count = max(type_dist.values())
+        
+        distribution = ["\n## 📁 File Type Distribution\n"]
+        for ext, count in type_dist.items():
+            percentage = (count / total_files) * 100
+            bar = self._generate_ascii_bar(count, max_count)
+            distribution.append(
+                f"- {ext:<15} {count:>4} files {bar} {percentage:>5.1f}%"
+            )
+            
+        return "\n".join(distribution)
 
-    def add_recommendation(self, message: str):
-        """Add a recommendation to the report."""
-        self.recommendations.append(message)
+    def _generate_duplicate_findings(self, duplicates: Dict[str, List[Path]]) -> str:
+        """Generate duplicate files section."""
+        if not duplicates:
+            return "\n## 🔍 Duplicate Files\n\nNo duplicate files found."
+            
+        findings = ["\n## 🔍 Duplicate Files\n"]
+        for hash_value, files in duplicates.items():
+            if not files:
+                continue
+                
+            try:
+                size = files[0].stat().st_size
+                findings.append(f"\n### Group ({self._format_size(size)} each)")
+                for file in files:
+                    findings.append(f"- {file}")
+            except OSError:
+                continue
+                
+        return "\n".join(findings)
 
-    def update_statistics(self, stats: dict):
-        """Update report statistics."""
-        self.statistics.update(stats)
+    def _generate_recommendations(self, duplicates: Dict[str, List[Path]]) -> str:
+        """Generate recommendations section."""
+        if not duplicates:
+            return "\n## 💡 Recommendations\n\nNo issues found. Your file structure looks good!"
+            
+        recommendations = [
+            "\n## 💡 Recommendations",
+            "\nHere are some suggestions to optimize your file structure:",
+            "\n1. **Review Duplicate Files**",
+            "   - Use interactive mode (`--interactive`) to manage duplicates",
+            "   - Consider using symbolic links for frequently accessed duplicates",
+            "   - Backup important files before deletion",
+            "\n2. **Storage Optimization**",
+            "   - Remove unnecessary duplicate files",
+            "   - Consider archiving rarely accessed files",
+            "   - Use version control instead of keeping multiple copies",
+            "\n3. **Best Practices**",
+            "   - Implement a consistent file naming convention",
+            "   - Organize files into logical directories",
+            "   - Use version control for tracking changes",
+            "   - Regular cleanup of temporary and cache files"
+        ]
+        return "\n".join(recommendations)
 
-    def generate_markdown(self, output_path: Path):
-        """Generate a markdown report."""
-        with open(output_path, 'w', encoding='utf-8') as f:
-            # Header
-            f.write("# File Tree Analysis Report\n\n")
-            f.write(f"Generated on: {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Target Directory: {self.directory.absolute()}\n\n")
-
-            # Summary section
-            f.write("## Summary\n\n")
-            f.write(f"- Total Files: {self.statistics['total_files']}\n")
-            f.write(f"- Total Size: {format_size(self.statistics['total_size'])}\n")
-            f.write(f"- Duplicate Groups: {self.statistics['duplicate_groups']}\n")
-            f.write(f"- Wasted Space: {format_size(self.statistics['wasted_space'])}\n")
-            f.write(f"- Hidden Files: {self.statistics['hidden_files']}\n\n")
-
-            # File type distribution
-            if self.statistics['file_types']:
-                f.write("### File Type Distribution\n\n")
-                for ext, count in self.statistics['file_types'].items():
-                    f.write(f"- {ext or 'No extension'}: {count} files\n")
-                f.write("\n")
-
-            # Directory structure
-            if self.statistics['depth_stats']['deep_paths']:
-                f.write("### Directory Structure\n\n")
-                f.write(f"- Maximum Depth: {self.statistics['depth_stats']['max_depth']} levels\n")
-                f.write(f"- Average Depth: {self.statistics['depth_stats']['avg_depth']:.1f} levels\n")
-                if len(self.statistics['depth_stats']['deep_paths']) > 0:
-                    f.write("\nDeepest Paths:\n")
-                    for path in self.statistics['depth_stats']['deep_paths'][:3]:
-                        f.write(f"- {path}\n")
-                f.write("\n")
-
-            # Findings section
-            if self.findings:
-                f.write("## 🔍 Findings\n\n")
-                for finding in self.findings:
-                    f.write(f"{finding['icon']} **{finding['category']}**: {finding['message']}\n\n")
-
-            # Large files section
-            if self.statistics['large_files']:
-                f.write("### 📦 Large Files\n\n")
-                for file_info in sorted(self.statistics['large_files'], 
-                                      key=lambda x: x['size'], reverse=True)[:5]:
-                    f.write(f"- {file_info['path']} ({format_size(file_info['size'])})\n")
-                f.write("\n")
-
-            # Recommendations section
-            if self.recommendations:
-                f.write("## 💡 Recommendations\n\n")
-                for recommendation in self.recommendations:
-                    f.write(f"- {recommendation}\n")
-                f.write("\n")
-
-            # Footer with additional information
-            f.write("\n---\n")
-            f.write("*Generated by File Tree Analyzer*\n")
-            f.write("For more information, run with `-h` or `--help`\n")
-
-def format_size(size_in_bytes: int) -> str:
-    """Format file size in human readable format."""
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_in_bytes < 1024:
-            return f"{size_in_bytes:.1f} {unit}"
-        size_in_bytes /= 1024
-    return f"{size_in_bytes:.1f} TB" 
+    def generate_report(
+        self,
+        directory: Path,
+        files: List[Path],
+        duplicates: Dict[str, List[Path]],
+        config: Config,
+        show_tree: bool = True
+    ) -> str:
+        """Generate complete analysis report."""
+        sections = [
+            self._generate_summary(files, duplicates),
+            self._generate_file_type_distribution(files),
+            self._generate_duplicate_findings(duplicates),
+            self._generate_recommendations(duplicates),
+            "\n## ⚙️ Configuration Used",
+            f"\n- Ignore Patterns: {', '.join(config.ignore_patterns)}",
+            f"- Follow Symlinks: {config.follow_symlinks}",
+            f"- Include Hidden: {config.include_hidden}",
+            f"- Min File Size: {self._format_size(config.min_file_size)}",
+            f"- Max Depth: {'Unlimited' if config.max_depth is None else config.max_depth}"
+        ]
+        
+        return "\n".join(sections) 
