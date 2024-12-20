@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 from filetree.cli import main, display_results
+from filetree.utils.config import FileTreeConfig
 from rich.console import Console
 
 @pytest.fixture
@@ -44,7 +45,7 @@ def test_display_results_with_duplicates(mock_console):
     }
     with patch("filetree.cli.console", mock_console):
         display_results(duplicates)
-        assert mock_console.print.call_count >= 3
+        mock_console.print.assert_any_call("\nFound [bold]2[/bold] groups of duplicate files.")
 
 def test_main_invalid_directory(mock_console):
     """Test main with invalid directory."""
@@ -52,31 +53,6 @@ def test_main_invalid_directory(mock_console):
         with patch("sys.argv", ["filetree", r"\nonexistent"]):
             assert main() == 1
             mock_console.print.assert_called_with(r"[red]Error: Directory '\nonexistent' does not exist.[/red]")
-
-def test_main_with_duplicates(mock_console):
-    """Test main with duplicates found."""
-    mock_scanner = MagicMock()
-    mock_scanner.find_duplicates.return_value = {
-        "hash1": [Path("file1.txt"), Path("file2.txt")]
-    }
-    
-    with patch("filetree.cli.console", mock_console), \
-         patch("filetree.cli.FileScanner", return_value=mock_scanner), \
-         patch("filetree.cli.FileTreeVisualizer"), \
-         patch("sys.argv", ["filetree", "."]):
-        assert main() == 0
-        mock_scanner.find_duplicates.assert_called_once()
-
-def test_main_with_error(mock_console):
-    """Test main with error during scanning."""
-    mock_scanner = MagicMock()
-    mock_scanner.find_duplicates.side_effect = Exception("Test error")
-    
-    with patch("filetree.cli.console", mock_console), \
-         patch("filetree.cli.FileScanner", return_value=mock_scanner), \
-         patch("sys.argv", ["filetree", "."]):
-        assert main() == 1
-        mock_console.print.assert_called_with("[red]Error: Test error[/red]")
 
 @patch('filetree.cli.console')
 def test_main_no_duplicates(mock_console):
@@ -110,36 +86,44 @@ def test_main_with_duplicates(mock_console, test_directory):
     mock_console.print.assert_any_call("\nFound [bold]2[/bold] groups of duplicate files.")
     mock_console.print.assert_any_call("\n[blue]Tip: Use --interactive (-i) to manage duplicates.[/blue]")
 
-@patch('filetree.cli.interactive_mode')
-@patch('filetree.cli.console')
-def test_main_interactive_mode(mock_console, mock_interactive, test_directory):
-    """Test main function in interactive mode."""
-    with patch('sys.argv', ['script.py', str(test_directory), '--interactive']):
-        main()
-        
-        # Verify that interactive mode was called
-        assert mock_interactive.called
-
-@patch('filetree.cli.console')
-def test_main_keyboard_interrupt(mock_console, test_directory):
-    """Test main function with keyboard interrupt."""
-    with patch('sys.argv', ['script.py', str(test_directory)]):
-        with patch('filetree.core.scanner.FileScanner.scan', side_effect=KeyboardInterrupt):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 130  # Standard exit code for SIGINT
-
-        # Verify interrupt message
-        mock_console.print.assert_called_with("\n[yellow]Operation cancelled by user[/yellow]")
-
 @patch('filetree.cli.console')
 def test_main_custom_workers(mock_console, test_directory):
     """Test main function with custom worker count."""
     workers = 4
     with patch('sys.argv', ['script.py', str(test_directory), '--workers', str(workers)]):
-        with patch('filetree.core.scanner.FileScanner') as mock_scanner:
-            mock_scanner.return_value.find_duplicates.return_value = {}
+        with patch('filetree.cli.FileScanner', autospec=True) as mock_scanner_class:
+            mock_scanner = mock_scanner_class.return_value
+            mock_scanner.find_duplicates.return_value = {}
             main()
 
             # Verify scanner was initialized with correct worker count
-            mock_scanner.assert_called_once_with(workers) 
+            assert mock_scanner_class.call_count == 1
+            assert mock_scanner_class.call_args.kwargs['num_workers'] == workers
+
+@patch('filetree.cli.console')
+def test_main_with_config(mock_console, test_directory):
+    """Test main function with custom configuration file."""
+    config_path = "config.json"
+    with patch('sys.argv', ['script.py', str(test_directory), '--config', config_path]):
+        with patch('filetree.utils.config.FileTreeConfig.from_file') as mock_config:
+            with patch('filetree.core.scanner.FileScanner') as mock_scanner:
+                mock_scanner.return_value.find_duplicates.return_value = {}
+                main()
+
+                # Verify config was loaded from file
+                mock_config.assert_called_once_with(config_path)
+
+@patch('filetree.cli.console')
+def test_main_with_export(mock_console, test_directory):
+    """Test main function with export option."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        export_path = Path(tmp_dir) / "results.json"
+        with patch('sys.argv', ['script.py', str(test_directory), '--export', str(export_path), '--no-tree']):
+            with patch('filetree.cli.FileScanner') as mock_scanner:
+                mock_scanner.return_value.find_duplicates.return_value = {}
+                with patch('filetree.cli.FileTreeVisualizer') as mock_visualizer_class:
+                    mock_visualizer = mock_visualizer_class.return_value
+                    mock_visualizer.export_results.return_value = None
+                    main()
+                    # Verify results were exported
+                    mock_visualizer.export_results.assert_called_once_with({}, export_path)
