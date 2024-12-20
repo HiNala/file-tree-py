@@ -15,6 +15,7 @@ class FileTreeConfig:
                  file_annotations: dict = None,
                  num_workers: int = None,
                  max_depth: int = None,
+                 include_hidden: bool = False,
                  debug_mode: bool = False):
         """Initialize configuration with default values."""
         self.similarity_threshold = similarity_threshold
@@ -31,6 +32,7 @@ class FileTreeConfig:
         }
         self.num_workers = num_workers if num_workers is not None else os.cpu_count()
         self.max_depth = max_depth  # None means no depth limit
+        self.include_hidden = include_hidden  # Whether to include hidden files and directories
         self.debug_mode = debug_mode
 
     def __str__(self) -> str:
@@ -38,7 +40,7 @@ class FileTreeConfig:
         return (
             f"FileTreeConfig(similarity_threshold={self.similarity_threshold}, "
             f"num_workers={self.num_workers}, max_depth={self.max_depth}, "
-            f"debug_mode={self.debug_mode})"
+            f"include_hidden={self.include_hidden}, debug_mode={self.debug_mode})"
         )
 
     @classmethod
