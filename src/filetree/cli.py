@@ -20,17 +20,22 @@ def setup_logging(verbose: bool = False):
         datefmt="[%X]",
         handlers=[RichHandler(rich_tracebacks=True)]
     )
+    logger.debug("Logging initialized with level: %s", level)
 
 def display_results(duplicates: dict, interactive: bool = False):
     """Display scan results."""
+    logger.debug("Displaying results (interactive=%s)", interactive)
     if not duplicates:
+        logger.debug("No duplicates found")
         console.print("[green]No duplicate files found.[/green]")
         return
 
-    duplicate_groups = len(duplicates)
-    console.print(f"[yellow]Found {duplicate_groups} group(s) of duplicate files.[/yellow]")
+    num_groups = len(duplicates)
+    logger.debug("Found %d groups of duplicate files", num_groups)
+    console.print(f"\nFound [bold]{num_groups}[/bold] groups of duplicate files.")
     
     for hash_value, paths in duplicates.items():
+        logger.debug("Duplicate group (hash: %s) contains %d files", hash_value[:8], len(paths))
         console.print(f"\n[bold]Duplicate group (hash: {hash_value[:8]})[/bold]")
         for path in paths:
             console.print(f"  {path}")
@@ -44,6 +49,7 @@ def main(args=None):
         if args is None:
             args = sys.argv[1:]
 
+        logger.debug("Parsing command line arguments: %s", args)
         parser = argparse.ArgumentParser(description="Analyze directory structure and find duplicate files.")
         parser.add_argument("directory", help="Directory to analyze")
         parser.add_argument("-w", "--workers", type=int, help="Number of worker threads")
@@ -51,30 +57,61 @@ def main(args=None):
         parser.add_argument("--no-tree", action="store_true", help="Disable tree view")
         parser.add_argument("--export", help="Export results to file")
         parser.add_argument("--config", help="Path to configuration file")
+        parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
         args = parser.parse_args(args)
+        setup_logging(args.verbose)
         directory = Path(args.directory)
+        logger.debug("Target directory: %s", directory)
 
         if not directory.exists():
+            logger.error("Directory does not exist: %s", directory)
             console.print(f"[red]Error: Directory '{directory}' does not exist.[/red]")
             return 1
 
-        scanner = FileScanner(args.workers)
+        # Load configuration
+        logger.debug("Loading configuration from file: %s", args.config if args.config else "default")
+        config = FileTreeConfig.from_file(args.config) if args.config else FileTreeConfig()
+        
+        # Initialize scanner with config and optional worker count
+        logger.debug("Initializing scanner with %s workers", args.workers or "default")
+        scanner = FileScanner(config=config, num_workers=args.workers)
+        
+        console.print(f"Scanning directory: {directory}")
+        
+        # Find duplicates
+        logger.debug("Starting duplicate file scan")
         duplicates = scanner.find_duplicates(directory)
-        display_results(duplicates)
+        logger.debug("Scan complete, found %d duplicate groups", len(duplicates))
+        
+        # Display results
+        display_results(duplicates, args.interactive)
 
-        if args.interactive:
-            interactive_mode(duplicates)
+        # Create visualizer for tree view or export
+        logger.debug("Creating file tree visualizer")
+        visualizer = FileTreeVisualizer()
+
+        if not args.no_tree:
+            logger.debug("Generating tree view")
+            tree = visualizer.create_tree(directory, duplicates)
+            console.print(tree)
+
+        if args.export:
+            export_path = Path(args.export)
+            logger.debug("Exporting results to: %s", export_path)
+            visualizer.export_results(duplicates, export_path)
+            console.print(f"\n[green]Results exported to {export_path}[/green]")
 
         return 0
 
     except KeyboardInterrupt:
+        logger.info("Operation cancelled by user")
         console.print("\n[yellow]Operation cancelled by user[/yellow]")
-        return 1
+        sys.exit(130)  # Standard exit code for SIGINT
     except Exception as e:
-        console.print(f"[red]Error: {str(e)}[/red]")
         logger.error("An error occurred", exc_info=True)
+        console.print(f"[red]Error: {str(e)}[/red]")
         return 1
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

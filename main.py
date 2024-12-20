@@ -5,7 +5,7 @@ from filetree.cli import main
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main(sys.argv[1:]))
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
         sys.exit(0)

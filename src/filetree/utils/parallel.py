@@ -4,7 +4,7 @@ import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterator, Tuple
+from typing import List, Dict, Callable, Any, Iterator, Tuple, Set
 from .env import env_config
 from collections import defaultdict
 
@@ -64,7 +64,7 @@ class ParallelProcessor:
         """Scan directory for files."""
         if not directory.exists():
             logger.error(f"Directory not found: {directory}")
-            return []
+            raise FileNotFoundError(f"Directory not found: {directory}")
 
         try:
             files = []
@@ -75,3 +75,53 @@ class ParallelProcessor:
         except Exception as e:
             logger.error(f"Error scanning directory {directory}: {e}")
             return []
+
+    def compute_file_hash(self, file_path: Path) -> str:
+        """Compute SHA256 hash of a file in chunks."""
+        logger.debug("Computing hash for file: %s", file_path)
+        try:
+            hasher = hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                while chunk := f.read(8192):  # Read in 8KB chunks
+                    hasher.update(chunk)
+            file_hash = hasher.hexdigest()
+            logger.debug("Hash computed for %s: %s", file_path, file_hash[:8])
+            return file_hash
+        except Exception as e:
+            logger.error("Error computing hash for %s: %s", file_path, e, exc_info=True)
+            raise
+
+    def process_files(self, files: Set[Path]) -> Dict[str, List[Path]]:
+        """Process files in parallel to compute their hashes."""
+        logger.debug("Processing %d files in parallel", len(files))
+        hash_map: Dict[str, List[Path]] = {}
+
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            future_to_path = {executor.submit(self.compute_file_hash, path): path for path in files}
+            
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    file_hash = future.result()
+                    if file_hash not in hash_map:
+                        hash_map[file_hash] = []
+                    hash_map[file_hash].append(path)
+                    logger.debug("Added file to hash map: %s -> %s", path, file_hash[:8])
+                except Exception as e:
+                    logger.error("Error processing file %s: %s", path, e)
+
+        logger.debug("Processed all files, found %d unique hashes", len(hash_map))
+        return hash_map
+
+    def find_duplicates(self, files: Set[Path]) -> Dict[str, List[Path]]:
+        """Find duplicate files based on their content hash."""
+        logger.debug("Finding duplicates among %d files", len(files))
+        
+        # Process files to get hash map
+        hash_map = self.process_files(files)
+        
+        # Filter out unique files
+        duplicates = {h: paths for h, paths in hash_map.items() if len(paths) > 1}
+        logger.debug("Found %d groups of duplicate files", len(duplicates))
+        
+        return duplicates
