@@ -3,20 +3,24 @@ import os
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterator
+from typing import List, Dict, Callable, Any, Iterator, Tuple
 from .env import env_config
 
-def compute_file_hash(file_path: Path, chunk_size: int = 8192) -> str:
-    """Compute SHA256 hash of a file in chunks to handle large files efficiently."""
+def compute_file_hash(file_path: Path, chunk_size: int = 8192) -> Tuple[str, Path]:
+    """Compute SHA256 hash of a file in chunks to handle large files efficiently.
+    
+    Returns:
+        Tuple of (hash_value, file_path)
+    """
     sha256_hash = hashlib.sha256()
     try:
         with open(file_path, "rb") as f:
             for byte_block in iter(lambda: f.read(chunk_size), b""):
                 sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
+        return (sha256_hash.hexdigest(), file_path)
     except (IOError, OSError) as e:
         print(f"Warning: Could not hash file {file_path}: {e}")
-        return ""
+        return ("", file_path)
 
 class ParallelProcessor:
     """Handles parallel processing of file tree operations."""
@@ -71,11 +75,12 @@ class ParallelProcessor:
         """
         hash_map: Dict[str, List[Path]] = {}
         
-        for file_hash in self.process_files(files, compute_file_hash):
-            if file_hash and file_hash in hash_map:
-                hash_map[file_hash].append(file_hash)
-            elif file_hash:
-                hash_map[file_hash] = [file_hash]
+        for file_hash, file_path in self.process_files(files, compute_file_hash):
+            if file_hash:  # Only process if hash computation succeeded
+                if file_hash in hash_map:
+                    hash_map[file_hash].append(file_path)
+                else:
+                    hash_map[file_hash] = [file_path]
         
         # Filter out unique files
         return {h: paths for h, paths in hash_map.items() if len(paths) > 1}
@@ -140,4 +145,4 @@ class ParallelProcessor:
                 if f.is_file() and should_process(f)
             ])
             
-            return all_files 
+            return all_files
