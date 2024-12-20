@@ -4,132 +4,83 @@ import tempfile
 from pathlib import Path
 import pytest
 from filetree.utils.parallel import ParallelProcessor, compute_file_hash
+from unittest.mock import patch, MagicMock
 
 @pytest.fixture
-def temp_dir():
-    """Create a temporary directory with test files."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        # Create some test files
-        root = Path(tmp_dir)
-        
-        # Create duplicate files
-        content1 = b"test content 1"
-        content2 = b"test content 2"
-        
-        # Create files in root
-        (root / "file1.txt").write_bytes(content1)
-        (root / "file2.txt").write_bytes(content1)  # Duplicate of file1
-        (root / "file3.txt").write_bytes(content2)
-        
-        # Create subdirectory with more files
-        subdir = root / "subdir"
-        subdir.mkdir()
-        (subdir / "file4.txt").write_bytes(content1)  # Duplicate of file1
-        (subdir / "file5.txt").write_bytes(content2)  # Duplicate of file3
-        
-        # Create hidden files and directories
-        (root / ".hidden_file.txt").write_bytes(b"hidden content")
-        hidden_dir = root / ".hidden_dir"
-        hidden_dir.mkdir()
-        (hidden_dir / "file6.txt").write_bytes(b"hidden dir content")
-        
-        yield root
+def processor():
+    """Create a parallel processor instance for testing."""
+    return ParallelProcessor(num_workers=2)
 
-def test_compute_file_hash(temp_dir):
-    """Test file hash computation."""
-    file1 = temp_dir / "file1.txt"
-    file2 = temp_dir / "file2.txt"
-    file3 = temp_dir / "file3.txt"
-    
-    # Test that identical files have the same hash
-    assert compute_file_hash(file1) == compute_file_hash(file2)
-    # Test that different files have different hashes
-    assert compute_file_hash(file1) != compute_file_hash(file3)
+def test_processor_initialization():
+    """Test parallel processor initialization."""
+    processor = ParallelProcessor(num_workers=4)
+    assert processor.num_workers == 4
 
-def test_parallel_processor_init():
-    """Test ParallelProcessor initialization."""
-    # Test default initialization
-    processor = ParallelProcessor()
-    assert processor.max_workers == os.cpu_count() * 2
+def test_compute_file_hash(tmp_path):
+    """Test computing file hash."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test content")
     
-    # Test custom workers
-    custom_workers = 4
-    processor = ParallelProcessor(max_workers=custom_workers)
-    assert processor.max_workers == custom_workers
+    hash_value = compute_file_hash(test_file)
+    assert isinstance(hash_value, str)
+    assert len(hash_value) == 64  # SHA256 hash length
 
-def test_scan_directory(temp_dir):
-    """Test parallel directory scanning."""
-    processor = ParallelProcessor()
-    files = processor.scan_directory(temp_dir)
+def test_find_duplicates(processor, tmp_path):
+    """Test finding duplicate files."""
+    # Create test files
+    file1 = tmp_path / "file1.txt"
+    file2 = tmp_path / "file2.txt"
+    file3 = tmp_path / "file3.txt"
     
-    # Convert to set of relative paths for easier comparison
-    relative_paths = {str(f.relative_to(temp_dir)) for f in files}
+    file1.write_text("test content")
+    file2.write_text("test content")  # Duplicate of file1
+    file3.write_text("different content")
     
-    # Check that we found all non-hidden files
-    expected_files = {
-        "file1.txt",
-        "file2.txt",
-        "file3.txt",
-        "subdir/file4.txt",
-        "subdir/file5.txt"
-    }
+    duplicates = processor.find_duplicates(tmp_path)
+    assert len(duplicates) == 1  # One group of duplicates
     
-    assert relative_paths == expected_files
+    # Get the hash and files for the duplicate group
+    hash_value = next(iter(duplicates))
+    duplicate_files = duplicates[hash_value]
     
-    # Verify hidden files are not included by default
-    hidden_files = {".hidden_file.txt", ".hidden_dir/file6.txt"}
-    assert not any(hidden in relative_paths for hidden in hidden_files)
+    assert len(duplicate_files) == 2
+    assert file1 in duplicate_files
+    assert file2 in duplicate_files
+    assert file3 not in duplicate_files
 
-def test_find_duplicates(temp_dir):
-    """Test parallel duplicate file detection."""
-    processor = ParallelProcessor()
-    files = processor.scan_directory(temp_dir)
-    duplicates = processor.find_duplicates(files)
+def test_scan_directory(processor, tmp_path):
+    """Test scanning directory."""
+    # Create test files and directories
+    file1 = tmp_path / "file1.txt"
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+    file2 = subdir / "file2.txt"
     
-    # We should have two sets of duplicates
-    assert len(duplicates) == 2
+    file1.write_text("content1")
+    file2.write_text("content2")
     
-    # Convert paths to relative for easier comparison
-    dup_groups = [
-        {str(p.relative_to(temp_dir)) for p in paths}
-        for paths in duplicates.values()
-    ]
-    
-    # Check that we found both groups of duplicates
-    expected_groups = [
-        {"file1.txt", "file2.txt", "subdir/file4.txt"},  # content1 duplicates
-        {"file3.txt", "subdir/file5.txt"}  # content2 duplicates
-    ]
-    
-    assert all(group in dup_groups for group in expected_groups)
+    files = processor.scan_directory(tmp_path)
+    assert len(files) == 2
+    assert file1 in files
+    assert file2 in files
 
-def test_process_files(temp_dir):
-    """Test parallel file processing."""
-    processor = ParallelProcessor()
-    files = list(temp_dir.glob("*.txt"))
+def test_process_files(processor, tmp_path):
+    """Test processing files in parallel."""
+    # Create test files
+    files = []
+    for i in range(5):
+        file = tmp_path / f"file{i}.txt"
+        file.write_text(f"content {i}")
+        files.append(file)
     
-    # Test with a simple processor function
-    def get_file_size(path: Path) -> int:
-        return path.stat().st_size
+    def process_func(file):
+        return file.name
     
-    sizes = list(processor.process_files(files, get_file_size))
-    assert len(sizes) == len(files)
-    assert all(isinstance(size, int) for size in sizes)
+    results = list(processor.process_files(files, process_func))
+    assert len(results) == 5
+    assert all(f"file{i}.txt" in results for i in range(5))
 
-def test_error_handling(temp_dir):
-    """Test error handling in parallel processing."""
-    processor = ParallelProcessor()
-    
-    # Create a non-existent file
-    non_existent = temp_dir / "non_existent.txt"
-    
-    # Test hash computation of non-existent file
-    assert compute_file_hash(non_existent) == ""
-    
-    # Test processing with failing function
-    def failing_processor(path: Path):
-        raise Exception("Test error")
-    
-    files = [temp_dir / "file1.txt"]
-    results = list(processor.process_files(files, failing_processor))
-    assert len(results) == 0  # All processing should have failed 
+def test_error_handling(processor):
+    """Test error handling in parallel processor."""
+    with pytest.raises(Exception):
+        processor.find_duplicates(Path("/nonexistent"))

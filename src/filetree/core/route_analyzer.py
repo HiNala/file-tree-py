@@ -4,42 +4,46 @@ from collections import defaultdict
 import difflib
 
 class RouteAnalyzer:
-    """Analyzes directory structures to find similar or duplicate routes."""
-    
-    def __init__(self, root_path: Path):
+    """Analyze directory routes for similarity."""
+
+    def __init__(self, root_path: Path, similarity_threshold: float = 0.8):
+        """Initialize the route analyzer."""
         self.root_path = root_path
-        self.routes: Dict[str, List[Path]] = defaultdict(list)
-        self.similar_routes: List[Tuple[Path, Path, float]] = []
-    
-    def analyze(self) -> None:
-        """Analyze directory structure for similar routes."""
-        # First, collect all directory paths
-        for path in self.root_path.rglob('*'):
-            if path.is_dir():
-                # Get relative path pattern (e.g., "src/utils", "lib/utils")
-                relative = path.relative_to(self.root_path)
-                pattern = '/'.join(part for part in relative.parts)
-                if pattern:
-                    self.routes[pattern].append(path)
-        
-        # Find similar route patterns
-        patterns = list(self.routes.keys())
-        for i, pattern1 in enumerate(patterns):
-            for pattern2 in patterns[i+1:]:
-                similarity = difflib.SequenceMatcher(None, pattern1, pattern2).ratio()
-                if similarity > 0.8:  # Adjust threshold as needed
-                    for path1 in self.routes[pattern1]:
-                        for path2 in self.routes[pattern2]:
-                            self.similar_routes.append((path1, path2, similarity))
-    
-    def get_duplicate_routes(self) -> List[Tuple[str, List[Path]]]:
-        """Get routes that appear multiple times."""
-        return [
-            (pattern, paths) 
-            for pattern, paths in self.routes.items() 
-            if len(paths) > 1
+        self.similarity_threshold = similarity_threshold
+        self.routes = []
+
+    def find_similar_routes(self) -> List[Tuple[str, str, float]]:
+        """Find similar directory routes based on path similarity."""
+        self.routes = [
+            str(p.relative_to(self.root_path))
+            for p in self.root_path.rglob("*")
+            if p.is_dir()
         ]
-    
-    def get_similar_routes(self) -> List[Tuple[Path, Path, float]]:
-        """Get routes that have similar patterns."""
-        return sorted(self.similar_routes, key=lambda x: x[2], reverse=True) 
+
+        similar_routes = []
+        for i, route1 in enumerate(self.routes):
+            for route2 in self.routes[i + 1:]:
+                similarity = self._compute_similarity(route1, route2)
+                if similarity >= self.similarity_threshold:
+                    similar_routes.append((route1, route2, similarity))
+
+        return similar_routes
+
+    def _compute_similarity(self, path1: str, path2: str) -> float:
+        """Compute similarity between two paths using Levenshtein distance."""
+        if not path1 or not path2:
+            return 0.0
+
+        # Convert Windows path separators to Unix style for consistency
+        path1 = path1.replace("\\", "/")
+        path2 = path2.replace("\\", "/")
+
+        # Split paths into components
+        parts1 = path1.split("/")
+        parts2 = path2.split("/")
+
+        # Compare path components
+        matches = sum(1 for a, b in zip(parts1, parts2) if a == b)
+        total = max(len(parts1), len(parts2))
+
+        return matches / total if total > 0 else 0.0

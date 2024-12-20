@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import json
+import sys
 
 @pytest.fixture
 def temp_dir():
@@ -25,8 +26,9 @@ def mock_file_tree(temp_dir):
     (temp_dir / "lib" / "utils" / "helper.py").write_text("def help(): pass")
     (temp_dir / "README.md").write_text("# Test Project")
     
-    # Create a symlink
-    (temp_dir / "src" / "utils" / "link.py").symlink_to(temp_dir / "src" / "main.py")
+    # Create a symlink only on non-Windows systems
+    if not sys.platform.startswith('win'):
+        (temp_dir / "src" / "utils" / "link.py").symlink_to(temp_dir / "src" / "main.py")
     
     return temp_dir
 

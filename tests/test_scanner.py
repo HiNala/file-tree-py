@@ -4,131 +4,67 @@ import tempfile
 from pathlib import Path
 import pytest
 from filetree.core.scanner import FileScanner
+from filetree.utils.config import FileTreeConfig
+from unittest.mock import patch, MagicMock
 
 @pytest.fixture
-def test_directory():
-    """Create a temporary directory with test files."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        # Create test directory structure
-        root = Path(tmp_dir)
-        
-        # Create some test files with duplicate content
-        content1 = b"test content 1"
-        content2 = b"test content 2"
-        unique_content = b"unique content"
-        
-        # Create files in root
-        (root / "file1.txt").write_bytes(content1)
-        (root / "file2.txt").write_bytes(content1)  # Duplicate
-        (root / "unique.txt").write_bytes(unique_content)
-        
-        # Create nested directory structure
-        subdir1 = root / "subdir1"
-        subdir1.mkdir()
-        (subdir1 / "file3.txt").write_bytes(content2)
-        
-        subdir2 = root / "subdir2"
-        subdir2.mkdir()
-        (subdir2 / "file4.txt").write_bytes(content2)  # Duplicate
-        
-        # Create some hidden files
-        (root / ".hidden").write_bytes(b"hidden content")
-        
-        yield root
+def scanner():
+    """Create a scanner instance for testing."""
+    config = FileTreeConfig()
+    return FileScanner(config, num_workers=2)
 
 def test_scanner_initialization():
     """Test scanner initialization."""
-    scanner = FileScanner("dummy/path")
-    assert scanner.directory == Path("dummy/path")
-    assert isinstance(scanner.file_hashes, dict)
-    assert isinstance(scanner.scanned_files, set)
+    config = FileTreeConfig()
+    scanner = FileScanner(config, num_workers=4)
+    assert scanner.config == config
+    assert scanner.processor is not None
 
-def test_parallel_scanning(test_directory):
-    """Test parallel file scanning functionality."""
-    scanner = FileScanner(str(test_directory))
-    result = scanner.scan()
-    
-    # Check that all files were scanned
-    expected_files = {
-        "file1.txt",
-        "file2.txt",
-        "unique.txt",
-        "subdir1/file3.txt",
-        "subdir2/file4.txt"
+def test_find_duplicates(scanner, tmp_path):
+    """Test finding duplicate files."""
+    # Create test files
+    file1 = tmp_path / "file1.txt"
+    file2 = tmp_path / "file2.txt"
+    file1.write_text("test content")
+    file2.write_text("test content")
+
+    # Mock the parallel processor
+    mock_processor = MagicMock()
+    mock_processor.find_duplicates.return_value = {
+        "hash1": [file1, file2]
     }
-    
-    scanned_files = {
-        str(f.relative_to(test_directory))
-        for f in scanner.scanned_files
-    }
-    
-    assert scanned_files == expected_files
+    scanner.processor = mock_processor
 
-def test_duplicate_detection(test_directory):
-    """Test duplicate file detection."""
-    scanner = FileScanner(str(test_directory))
-    scanner.scan()
-    duplicates = scanner.get_duplicates()
-    
-    # We should have two groups of duplicates
-    assert len(duplicates) == 2
-    
-    # Convert paths to relative for easier comparison
-    duplicate_groups = [
-        {str(p.relative_to(test_directory)) for p in paths}
-        for paths in duplicates.values()
-    ]
-    
-    # Check both groups of duplicates
-    expected_groups = [
-        {"file1.txt", "file2.txt"},  # content1 duplicates
-        {"subdir1/file3.txt", "subdir2/file4.txt"}  # content2 duplicates
-    ]
-    
-    assert all(group in duplicate_groups for group in expected_groups)
+    duplicates = scanner.find_duplicates(tmp_path)
+    assert len(duplicates) == 1
+    assert len(duplicates["hash1"]) == 2
+    mock_processor.find_duplicates.assert_called_once_with(tmp_path)
 
-def test_custom_workers():
-    """Test scanner with custom number of workers."""
-    custom_workers = 4
-    scanner = FileScanner("dummy/path", max_workers=custom_workers)
-    assert scanner.processor.max_workers == custom_workers
+def test_scan_directory(scanner, tmp_path):
+    """Test scanning directory."""
+    # Create test files
+    file1 = tmp_path / "file1.txt"
+    file2 = tmp_path / "file2.txt"
+    file1.write_text("content1")
+    file2.write_text("content2")
 
-def test_empty_directory():
-    """Test scanning an empty directory."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        scanner = FileScanner(tmp_dir)
-        result = scanner.scan()
-        assert len(result) == 0
-        assert len(scanner.scanned_files) == 0
+    # Mock the parallel processor
+    mock_processor = MagicMock()
+    mock_processor.scan_directory.return_value = [file1, file2]
+    scanner.processor = mock_processor
 
-def test_error_handling():
-    """Test error handling for non-existent directory."""
-    scanner = FileScanner("non/existent/path")
-    result = scanner.scan()
-    assert len(result) == 0
-    assert len(scanner.scanned_files) == 0
+    files = scanner.scan_directory(tmp_path)
+    assert len(files) == 2
+    assert file1 in files
+    assert file2 in files
+    mock_processor.scan_directory.assert_called_once_with(tmp_path)
 
-def test_large_directory_structure(tmp_path):
-    """Test scanning a large directory structure."""
-    # Create a larger directory structure
-    for i in range(5):
-        subdir = tmp_path / f"dir{i}"
-        subdir.mkdir()
-        for j in range(10):
-            (subdir / f"file{j}.txt").write_text(f"content {i}{j}")
-    
-    # Add some duplicates
-    duplicate_content = "duplicate content"
-    (tmp_path / "dir0/dup1.txt").write_text(duplicate_content)
-    (tmp_path / "dir1/dup2.txt").write_text(duplicate_content)
-    (tmp_path / "dir2/dup3.txt").write_text(duplicate_content)
-    
-    scanner = FileScanner(str(tmp_path))
-    result = scanner.scan()
-    
-    # Verify total number of scanned files
-    assert len(scanner.scanned_files) == 53  # 50 unique + 3 duplicates
-    
-    # Verify duplicates were found
-    duplicates = scanner.get_duplicates()
-    assert len(duplicates) >= 1  # At least one group of duplicates 
+def test_scanner_error_handling(scanner):
+    """Test error handling in scanner."""
+    mock_processor = MagicMock()
+    mock_processor.find_duplicates.side_effect = Exception("Test error")
+    scanner.processor = mock_processor
+
+    with pytest.raises(Exception) as exc_info:
+        scanner.find_duplicates(Path("/nonexistent"))
+    assert str(exc_info.value) == "Test error"

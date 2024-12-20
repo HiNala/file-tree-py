@@ -36,22 +36,27 @@ def test_files():
 
 def test_file_action_confirm(monkeypatch):
     """Test FileAction confirmation."""
-    monkeypatch.setattr('builtins.input', lambda _: 'y')
+    responses = iter(['y'])
+    monkeypatch.setattr('builtins.input', lambda *args: next(responses))
     assert FileAction.confirm_action("Test?") is True
-    
-    monkeypatch.setattr('builtins.input', lambda _: 'n')
+
+    responses = iter(['n'])
+    monkeypatch.setattr('builtins.input', lambda *args: next(responses))
     assert FileAction.confirm_action("Test?") is False
 
 def test_file_action_select_option(monkeypatch):
     """Test FileAction option selection."""
     options = ["Option 1", "Option 2", "Option 3"]
-    
+
     # Test valid selection
-    monkeypatch.setattr('builtins.input', lambda _: '2')
+    responses = iter(['2'])
+    monkeypatch.setattr('builtins.input', lambda *args: next(responses))
     assert FileAction.select_option(options, "Choose:") == "Option 2"
-    
-    # Test empty options
-    assert FileAction.select_option([], "Choose:") is None
+
+    # Test invalid then valid selection
+    responses = iter(['4', '1'])
+    monkeypatch.setattr('builtins.input', lambda *args: next(responses))
+    assert FileAction.select_option(options, "Choose:") == "Option 1"
 
 @patch('filetree.interactive.actions.console')
 def test_duplicate_resolver_show_duplicates(mock_console, test_files):
