@@ -1,160 +1,82 @@
+import sys
 import argparse
-import logging
 from pathlib import Path
 from rich.console import Console
-from rich.table import Table
-from rich.prompt import Confirm
-import json
-
 from .core.scanner import FileScanner
-from .core.route_analyzer import RouteAnalyzer
-from .visualization.tree_view import FileTreeVisualizer
-from .utils.config import FileTreeConfig
+from .interactive.actions import interactive_mode
 
-def setup_logging(debug_mode: bool):
-    """Configure logging based on debug mode."""
-    level = logging.DEBUG if debug_mode else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+console = Console()
 
-def export_results(data: dict, output_file: str):
-    """Export results to JSON file."""
-    with open(output_file, 'w') as f:
-        json.dump(data, f, indent=4)
-
-def main():
+def create_parser() -> argparse.ArgumentParser:
+    """Create command line argument parser."""
     parser = argparse.ArgumentParser(
-        description="Analyze directory structures and detect duplicate files."
+        description="Analyze directory structures and manage duplicates."
     )
+    
     parser.add_argument(
         "directory",
         type=str,
         help="Directory to analyze"
     )
+    
     parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to configuration file"
-    )
-    parser.add_argument(
-        "--no-tree",
+        "-i", "--interactive",
         action="store_true",
-        help="Skip tree visualization"
+        help="Enable interactive mode for managing duplicates and directories"
     )
+    
     parser.add_argument(
-        "--similarity-threshold",
-        type=float,
-        help="Similarity threshold for route analysis (default: 0.8)"
+        "-w", "--workers",
+        type=int,
+        default=None,
+        help="Number of worker threads for parallel processing"
     )
-    parser.add_argument(
-        "--export",
-        type=str,
-        help="Export results to JSON file"
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode"
-    )
+    
+    return parser
+
+def main():
+    """Main entry point for the CLI."""
+    parser = create_parser()
     args = parser.parse_args()
-
-    # Load configuration
-    config = (FileTreeConfig.from_file(Path(args.config)) 
-             if args.config 
-             else FileTreeConfig.default())
     
-    # Override config with CLI arguments
-    if args.similarity_threshold is not None:
-        config.similarity_threshold = args.similarity_threshold
-    
-    if args.debug:
-        config.debug_mode = True
-    
-    # Setup logging
-    setup_logging(config.debug_mode)
-    
-    # Initialize console
-    console = Console()
-
-    # Validate directory
-    directory = Path(args.directory)
-    if not directory.exists() or not directory.is_dir():
-        console.print(f"[red]Error: {directory} is not a valid directory[/red]")
-        return 1
-
-    # Scan directory
-    console.print(f"\n[bold blue]Scanning directory: {directory}[/bold blue]")
-    scanner = FileScanner(directory)
-    scanner.scan()
-    
-    # Analyze routes
-    console.print("\n[bold blue]Analyzing directory structure...[/bold blue]")
-    route_analyzer = RouteAnalyzer(directory, threshold=config.similarity_threshold)
-    route_analyzer.analyze()
-    
-    # Collect results for potential export
-    results = {
-        "duplicates": {},
-        "similar_routes": [],
-        "stats": {
-            "total_files": len(scanner.scanned_files),
-            "duplicate_files": sum(len(paths) for paths in scanner.get_duplicates().values())
-        }
-    }
-    
-    # Show tree visualization
-    if not args.no_tree:
-        console.print("\n[bold blue]Directory Structure:[/bold blue]")
-        visualizer = FileTreeVisualizer(console, config)
-        tree = visualizer.create_tree(directory, scanner.get_duplicates())
-        console.print(tree)
-    
-    # Display and collect duplicates
-    duplicates = scanner.get_duplicates()
-    if duplicates:
-        console.print("\n[bold red]Duplicate files found:[/bold red]")
-        table = Table(show_header=True)
-        table.add_column("Hash", style="dim")
-        table.add_column("Duplicate Files", style="red")
+    try:
+        directory = Path(args.directory)
+        if not directory.is_dir():
+            console.print(f"[red]Error:[/red] {directory} is not a directory")
+            sys.exit(1)
         
-        for file_hash, paths in duplicates.items():
-            table.add_row(
-                file_hash[:8] + "...",
-                "\n".join(str(p) for p in paths)
-            )
-            results["duplicates"][file_hash] = [str(p) for p in paths]
+        # Initialize scanner with optional worker count
+        scanner = FileScanner(str(directory), max_workers=args.workers)
         
-        console.print(table)
-    
-    # Display and collect similar routes
-    similar_routes = route_analyzer.get_similar_routes()
-    if similar_routes:
-        console.print("\n[bold yellow]Similar directory structures found:[/bold yellow]")
-        table = Table(show_header=True)
-        table.add_column("Route 1", style="cyan")
-        table.add_column("Route 2", style="cyan")
-        table.add_column("Similarity", style="green")
+        with console.status("[bold green]Scanning directory..."):
+            scanner.scan()
         
-        for path1, path2, similarity in similar_routes:
-            table.add_row(
-                str(path1.relative_to(directory)),
-                str(path2.relative_to(directory)),
-                f"{similarity:.2%}"
-            )
-            results["similar_routes"].append({
-                "route1": str(path1.relative_to(directory)),
-                "route2": str(path2.relative_to(directory)),
-                "similarity": similarity
-            })
+        duplicates = scanner.get_duplicates()
+        
+        if not duplicates:
+            console.print("[green]No duplicate files found.[/green]")
+            return
+        
+        console.print(f"\n[yellow]Found {len(duplicates)} groups of duplicate files:[/yellow]")
+        
+        if args.interactive:
+            interactive_mode(duplicates)
+        else:
+            # Display duplicates in non-interactive mode
+            for hash_value, paths in duplicates.items():
+                console.print(f"\n[cyan]Duplicate group (hash: {hash_value[:8]}):[/cyan]")
+                for path in paths:
+                    size = path.stat().st_size
+                    console.print(f"  {path} ({size:,} bytes)")
+            
+            console.print("\n[blue]Tip:[/blue] Use --interactive flag to manage duplicates")
     
-    # Export results if requested
-    if args.export:
-        export_results(results, args.export)
-        console.print(f"\n[green]Results exported to {args.export}[/green]")
-
-    return 0
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
+        sys.exit(0)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    exit(main()) 
+    main() 
