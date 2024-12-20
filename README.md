@@ -4,12 +4,32 @@ A command-line tool for analyzing directory structures, detecting duplicates, an
 
 ## Installation
 
-1. Clone this repository
-2. Create a virtual environment: `python -m venv venv`
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/HiNala/file-tree-py.git
+   cd file-tree-py
+   ```
+
+2. Create a virtual environment:
+   ```bash
+   python -m venv venv
+   ```
+
 3. Activate the virtual environment:
-   - Windows: `venv\Scripts\activate`
-   - Unix/MacOS: `source venv/bin/activate`
-4. Install dependencies: `pip install -r requirements.txt`
+   - Windows:
+     ```bash
+     venv\Scripts\activate
+     ```
+   - Unix/MacOS:
+     ```bash
+     source venv/bin/activate
+     ```
+
+4. Install the package in development mode:
+   ```bash
+   pip install -e .
+   ```
+
 5. Set up environment configuration:
    - Copy `.env.example` to `.env`
    - Update the values in `.env` with your configuration
@@ -43,14 +63,23 @@ COLOR_OUTPUT=True
 python main.py /path/to/directory
 ```
 
+Or use the installed command:
+```bash
+filetree /path/to/directory
+```
+
 ### Interactive Mode
 ```bash
 python main.py -i /path/to/directory
+# or
+filetree -i /path/to/directory
 ```
 
 ### Custom Worker Count
 ```bash
 python main.py -w 4 /path/to/directory
+# or
+filetree -w 4 /path/to/directory
 ```
 
 This will scan the directory and show any duplicate files found. Use the `-i` flag to enter interactive mode for managing duplicates and directories.
