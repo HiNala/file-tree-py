@@ -1,121 +1,95 @@
-# File Tree Analysis Tool
+# File Tree Analyzer
 
-A command-line tool for analyzing directory structures, detecting duplicates, and providing organizational insights.
+A Python tool for analyzing directory structures, finding duplicate files, and managing file organization.
+
+## Features
+
+- Find duplicate files based on content hash
+- Interactive mode for managing duplicates
+- Tree view visualization of directory structure
+- Export results to file
+- Configurable worker threads for parallel processing
 
 ## Installation
 
-1. Clone this repository:
+1. Clone the repository:
    ```bash
-   git clone https://github.com/HiNala/file-tree-py.git
+   git clone https://github.com/yourusername/file-tree-py.git
    cd file-tree-py
    ```
 
-2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   ```
-
-3. Activate the virtual environment:
-   - Windows:
-     ```bash
-     venv\Scripts\activate
-     ```
-   - Unix/MacOS:
-     ```bash
-     source venv/bin/activate
-     ```
-
-4. Install the package in development mode:
+2. Install in development mode:
    ```bash
    pip install -e .
    ```
 
-5. Set up environment configuration:
-   - Copy `.env.example` to `.env`
-   - Update the values in `.env` with your configuration
-
-## Environment Configuration
-
-The tool uses environment variables for configuration. Create a `.env` file based on `.env.example`:
-
-```bash
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key_here
-
-# Application Configuration
-DEBUG=False
-LOG_LEVEL=INFO
-
-# File Tree Configuration
-MAX_DEPTH=10
-EXCLUDE_PATTERNS=node_modules,__pycache__,.git
-INCLUDE_HIDDEN=False
-
-# Visualization Settings
-OUTPUT_FORMAT=tree  # Options: tree, json, yaml
-COLOR_OUTPUT=True
-```
-
 ## Usage
 
-### Basic Usage
+There are two ways to use the File Tree Analyzer:
+
+### 1. Interactive Mode (Recommended for New Users)
+
+Simply run the program without arguments:
 ```bash
-python main.py /path/to/directory
+python main.py
 ```
 
-Or use the installed command:
+The program will prompt you to enter a directory path. You can:
+1. Type '.' for the current directory
+2. Paste a full directory path
+3. Press Ctrl+C to exit
+
+### 2. Command Line Arguments
+
+For more advanced usage, you can provide arguments directly:
+
 ```bash
-filetree /path/to/directory
+python main.py [directory] [options]
 ```
 
-### Interactive Mode
+Options:
+- `-w, --workers N`: Set number of worker threads
+- `-i, --interactive`: Enable interactive mode for managing duplicates
+- `--no-tree`: Disable tree view visualization
+- `--export FILE`: Export results to specified file
+- `--config FILE`: Use custom configuration file
+- `-v, --verbose`: Enable verbose logging
+- `-h, --help`: Show help message
+
+Examples:
 ```bash
-python main.py -i /path/to/directory
-# or
-filetree -i /path/to/directory
+# Analyze current directory
+python main.py .
+
+# Analyze specific directory with verbose logging
+python main.py /path/to/directory -v
+
+# Enable interactive mode
+python main.py . -i
+
+# Export results to file
+python main.py . --export report.txt
 ```
 
-### Custom Worker Count
-```bash
-python main.py -w 4 /path/to/directory
-# or
-filetree -w 4 /path/to/directory
+## Configuration
+
+You can customize the behavior by creating a JSON configuration file:
+
+```json
+{
+  "similarity_threshold": 0.8,
+  "exclude_patterns": ["__pycache__", "*.pyc"],
+  "max_depth": 5,
+  "include_hidden": false,
+  "num_workers": 4
+}
 ```
 
-This will scan the directory and show any duplicate files found. Use the `-i` flag to enter interactive mode for managing duplicates and directories.
-
-## Features
-
-Current features:
-- Recursive directory scanning with parallel processing
-- Duplicate file detection using SHA256 hashing
-- Rich console output with colored formatting
-- Environment-based configuration
-- Customizable visualization options
-- Interactive file management:
-  - Resolve duplicates
-  - Merge directories
-  - Rename files/directories
-
-## Configuration Options
-
-| Environment Variable | Description | Default Value |
-|---------------------|-------------|---------------|
-| OPENAI_API_KEY | Your OpenAI API key for AI features | Required |
-| DEBUG | Enable debug mode | False |
-| LOG_LEVEL | Logging level (INFO, DEBUG, etc.) | INFO |
-| MAX_DEPTH | Maximum directory depth to scan | 10 |
-| EXCLUDE_PATTERNS | Comma-separated patterns to exclude | node_modules,__pycache__,.git |
-| INCLUDE_HIDDEN | Include hidden files and directories | False |
-| OUTPUT_FORMAT | Output format (tree, json, yaml) | tree |
-| COLOR_OUTPUT | Enable colored output | True |
-
-## Development
-
-### Running Tests
+Use the config file with:
 ```bash
-pytest tests/
+python main.py . --config myconfig.json
 ```
 
-### Code Style
-The project follows PEP 8 guidelines. Before committing, ensure your code is properly formatted.
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
