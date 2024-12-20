@@ -5,6 +5,7 @@ from typing import Dict, List, Set
 from concurrent.futures import ThreadPoolExecutor
 from ..utils.parallel import ParallelProcessor
 from ..utils.config import FileTreeConfig
+import fnmatch
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +21,22 @@ class FileScanner:
 
     def _should_exclude(self, path: Path) -> bool:
         """Check if a path should be excluded based on configuration."""
-        if not self.config.include_hidden and path.name.startswith('.'):
-            logger.debug("Excluding hidden path: %s", path)
-            return True
-
-        for pattern in self.config.exclude_patterns:
-            if pattern in str(path):
-                logger.debug("Excluding path matching pattern '%s': %s", pattern, path)
+        try:
+            # Check if path is hidden
+            if path.name.startswith('.') and not self.config.include_hidden:
+                logger.debug("Excluding hidden path: %s", path)
                 return True
 
-        return False
+            # Check if path matches ignore patterns
+            for pattern in self.config.ignore_patterns:
+                if fnmatch.fnmatch(path.name, pattern):
+                    logger.debug("Excluding path matching pattern %r: %s", pattern, path)
+                    return True
+
+            return False
+        except Exception as e:
+            logger.error("Error checking path exclusion: %s", e)
+            return False
 
     def _scan_directory(self, directory: Path, max_depth: int = None) -> Set[Path]:
         """Recursively scan a directory for files."""

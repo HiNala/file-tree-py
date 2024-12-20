@@ -19,7 +19,7 @@ class FileTreeConfig:
                  debug_mode: bool = False):
         """Initialize configuration with default values."""
         self.similarity_threshold = similarity_threshold
-        self.ignore_patterns = ignore_patterns or ["__pycache__", "*.pyc", "*.pyo", "*.pyd"]
+        self.ignore_patterns = ignore_patterns or ["__pycache__", "*.pyc", "*.pyo", "*.pyd", "node_modules", ".git"]
         self.file_annotations = file_annotations or {
             ".py": "[yellow](Python)[/yellow]",
             ".js": "[yellow](JavaScript)[/yellow]",
@@ -27,8 +27,6 @@ class FileTreeConfig:
             ".css": "[blue](CSS)[/blue]",
             ".md": "[green](Markdown)[/green]",
             ".json": "[yellow](JSON)[/yellow]",
-            ".yml": "[yellow](YAML)[/yellow]",
-            ".yaml": "[yellow](YAML)[/yellow]",
         }
         self.num_workers = num_workers if num_workers is not None else os.cpu_count()
         self.max_depth = max_depth  # None means no depth limit
@@ -52,6 +50,14 @@ class FileTreeConfig:
     def from_file(cls, config_file: Path) -> "FileTreeConfig":
         """Load configuration from a JSON file."""
         try:
+            if config_file is None:
+                return cls.default()
+            
+            config_file = Path(config_file)
+            if not config_file.exists():
+                logger.warning(f"Config file {config_file} not found, using defaults")
+                return cls.default()
+                
             with open(config_file) as f:
                 config_data = json.load(f)
             return cls(**config_data)
