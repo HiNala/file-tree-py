@@ -2,12 +2,20 @@ import os
 import hashlib
 from typing import Dict, List, Tuple, Set
 from pathlib import Path
+from ..utils.parallel import ParallelProcessor
 
 class FileScanner:
-    """Core file scanning functionality."""
+    """Core file scanning functionality with parallel processing."""
     
-    def __init__(self, directory: str):
+    def __init__(self, directory: str, max_workers: int = None):
+        """Initialize the file scanner.
+        
+        Args:
+            directory: Root directory to scan.
+            max_workers: Maximum number of worker threads for parallel processing.
+        """
         self.directory = Path(directory)
+        self.processor = ParallelProcessor(max_workers=max_workers)
         self.file_hashes: Dict[str, List[Path]] = {}
         self.scanned_files: Set[Path] = set()
     
@@ -25,15 +33,15 @@ class FileScanner:
 
     def scan(self) -> Dict[str, List[Path]]:
         """
-        Scan directory recursively and identify duplicates.
+        Scan directory recursively and identify duplicates using parallel processing.
         Returns a dictionary mapping file hashes to lists of file paths.
         """
-        for filepath in self.directory.rglob('*'):
-            if filepath.is_file():
-                file_hash = self.compute_file_hash(filepath)
-                if file_hash:  # Only process if hash computation succeeded
-                    self.file_hashes.setdefault(file_hash, []).append(filepath)
-                    self.scanned_files.add(filepath)
+        # Use parallel processor to scan directory
+        files = self.processor.scan_directory(self.directory)
+        self.scanned_files.update(files)
+        
+        # Find duplicates using parallel processing
+        self.file_hashes = self.processor.find_duplicates(files)
         
         return self.file_hashes
 
