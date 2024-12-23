@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional, List
 from rich.console import Console
 from rich.prompt import Prompt
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from .core.scanner import FileTreeScanner
 from .core.duplicates import DuplicateFinder
@@ -107,25 +108,49 @@ def main(args=None) -> int:
         
         scanner = FileTreeScanner(config)
         
-        # Scan path
-        console.print(f"\n[bold cyan]🔍 Scanning {path.name}...[/bold cyan]")
-        files = [path] if path.is_file() else scanner.scan_directory(path)
-        
-        # Find duplicates
-        console.print("[bold cyan]🔍 Analyzing duplicates...[/bold cyan]")
-        duplicate_finder = DuplicateFinder(min_size=args.min_size)
-        duplicates = duplicate_finder.find_duplicates(files)
-        
-        # Generate and display report
-        report_gen = ReportGenerator()
-        report = report_gen.generate_report(
-            directory=path.parent if path.is_file() else path,
-            files=files,
-            duplicates=duplicates,
-            config=config,
-            show_tree=not args.no_tree
+        # Create progress for operations
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True
         )
         
+        with progress:
+            # Scan path
+            scan_task = progress.add_task(
+                f"[cyan]🔍 Scanning {path.name}...",
+                total=None
+            )
+            files = [path] if path.is_file() else scanner.scan_directory(path)
+            progress.update(scan_task, completed=True)
+            
+            # Find duplicates
+            duplicate_task = progress.add_task(
+                "[cyan]🔍 Analyzing duplicates...",
+                total=None
+            )
+            duplicate_finder = DuplicateFinder(min_size=args.min_size)
+            duplicates = duplicate_finder.find_duplicates(files)
+            progress.update(duplicate_task, completed=True)
+            
+            # Generate report
+            report_task = progress.add_task(
+                "[cyan]📊 Generating report...",
+                total=None
+            )
+            report_gen = ReportGenerator()
+            report = report_gen.generate_report(
+                directory=path.parent if path.is_file() else path,
+                files=files,
+                duplicates=duplicates,
+                config=config,
+                show_tree=not args.no_tree
+            )
+            progress.update(report_task, completed=True)
+        
+        # Display report
         try:
             console.print(report)
         except UnicodeEncodeError:
@@ -135,12 +160,19 @@ def main(args=None) -> int:
         # Export report if requested
         if args.export:
             export_path = Path(args.export)
-            try:
-                export_path.write_text(report, encoding='utf-8')
-                console.print(f"\n[green]Report exported to: {export_path}[/green]")
-            except Exception as e:
-                console.print(f"[red]Error exporting report: {str(e)}[/red]")
-                return 1
+            with progress:
+                export_task = progress.add_task(
+                    "[cyan]📝 Exporting report...",
+                    total=None
+                )
+                try:
+                    export_path.write_text(report, encoding='utf-8')
+                    progress.update(export_task, completed=True)
+                    console.print(f"\n[green]Report exported to: {export_path}[/green]")
+                except Exception as e:
+                    progress.update(export_task, completed=True)
+                    console.print(f"[red]Error exporting report: {str(e)}[/red]")
+                    return 1
         
         # Start interactive mode if requested
         if args.interactive and duplicates:
