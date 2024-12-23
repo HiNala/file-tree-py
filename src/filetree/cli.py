@@ -4,12 +4,15 @@ from typing import Optional, List
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.table import Table
+from rich.panel import Panel
 
 from .core.scanner import FileTreeScanner
 from .core.duplicates import DuplicateFinder
 from .utils.config import Config
 from .utils.report import ReportGenerator
 from .interactive import DuplicateResolver
+from .analysis.directory_analyzer import DirectoryAnalyzer
 
 console = Console()
 
@@ -63,6 +66,11 @@ Examples:
         nargs="+",
         help="Patterns to exclude (glob format)"
     )
+    parser.add_argument(
+        "--no-diagram",
+        action="store_true",
+        help="Skip generating directory relationship diagram"
+    )
     return parser.parse_args(args)
 
 def get_path_from_user() -> Path:
@@ -82,15 +90,78 @@ def get_path_from_user() -> Path:
             
         return path.resolve()
 
+def display_directory_analysis(analyzer: DirectoryAnalyzer, path: Path, metrics: dict):
+    """Display directory analysis results."""
+    # Create table for poorly organized directories
+    poor_org_table = Table(title="📁 Poorly Organized Directories")
+    poor_org_table.add_column("Directory")
+    poor_org_table.add_column("Issues")
+    poor_org_table.add_column("Score")
+    
+    for dir_path, dir_metrics in metrics.items():
+        score = analyzer.get_organization_score(dir_metrics)
+        if score < 70:  # Show directories with poor organization
+            issues = []
+            if dir_metrics.mixed_content_types:
+                issues.append("Mixed content")
+            if dir_metrics.deep_nesting:
+                issues.append("Deep nesting")
+            if dir_metrics.inconsistent_naming:
+                issues.append("Inconsistent naming")
+            if dir_metrics.large_directory:
+                issues.append("Too many files")
+            if dir_metrics.empty_directory:
+                issues.append("Empty")
+            
+            poor_org_table.add_row(
+                str(dir_path.relative_to(path)),
+                ", ".join(issues),
+                f"{score:.0f}/100"
+            )
+    
+    console.print(poor_org_table)
+    
+    # Display large files
+    large_files = analyzer.find_large_files(path)
+    if large_files:
+        large_files_table = Table(title="📦 Large Files")
+        large_files_table.add_column("File")
+        large_files_table.add_column("Size")
+        
+        for file_path, size in large_files[:10]:  # Show top 10 largest files
+            large_files_table.add_row(
+                str(file_path.relative_to(path)),
+                f"{size / (1024*1024):.1f} MB"
+            )
+        
+        console.print("\n", large_files_table)
+    
+    # Display directory sizes
+    dir_sizes = analyzer.get_directory_sizes(path)
+    size_table = Table(title="📊 Directory Sizes")
+    size_table.add_column("Directory")
+    size_table.add_column("Size")
+    size_table.add_column("Files")
+    
+    # Sort directories by size
+    sorted_dirs = sorted(
+        ((p, s) for p, s in dir_sizes.items() if p != path),
+        key=lambda x: x[1],
+        reverse=True
+    )
+    
+    for dir_path, size in sorted_dirs[:10]:  # Show top 10 largest directories
+        metrics = metrics.get(dir_path)
+        size_table.add_row(
+            str(dir_path.relative_to(path)),
+            f"{size / (1024*1024):.1f} MB",
+            str(metrics.file_count) if metrics else "N/A"
+        )
+    
+    console.print("\n", size_table)
+
 def main(args=None) -> int:
-    """Main entry point.
-    
-    Args:
-        args: Optional list of command line arguments. If None, sys.argv[1:] will be used.
-    
-    Returns:
-        int: Exit code (0 for success, 1 for error)
-    """
+    """Main entry point."""
     args = parse_args(args)
     
     try:
@@ -107,6 +178,7 @@ def main(args=None) -> int:
             config.ignore_patterns.extend(args.exclude)
         
         scanner = FileTreeScanner(config)
+        analyzer = DirectoryAnalyzer()
         
         # Create progress for operations
         progress = Progress(
@@ -125,6 +197,24 @@ def main(args=None) -> int:
             )
             files = [path] if path.is_file() else scanner.scan_directory(path)
             progress.update(scan_task, completed=True)
+            
+            # Analyze directory structure
+            if not path.is_file():
+                analysis_task = progress.add_task(
+                    "[cyan]📊 Analyzing directory structure...",
+                    total=None
+                )
+                metrics = analyzer.analyze_directory(path)
+                progress.update(analysis_task, completed=True)
+                
+                # Generate relationship diagram
+                if not args.no_diagram:
+                    diagram_task = progress.add_task(
+                        "[cyan]📐 Generating directory diagram...",
+                        total=None
+                    )
+                    diagram_path = analyzer.generate_relationship_diagram(path)
+                    progress.update(diagram_task, completed=True)
             
             # Find duplicates
             duplicate_task = progress.add_task(
@@ -150,9 +240,15 @@ def main(args=None) -> int:
             )
             progress.update(report_task, completed=True)
         
+        # Display analysis results
+        if not path.is_file():
+            display_directory_analysis(analyzer, path, metrics)
+            if not args.no_diagram:
+                console.print(f"\n[green]Directory diagram saved to: {diagram_path}[/green]")
+        
         # Display report
         try:
-            console.print(report)
+            console.print("\n", report)
         except UnicodeEncodeError:
             # Fall back to plain text if terminal doesn't support Unicode
             console.print(report.encode('ascii', 'replace').decode())

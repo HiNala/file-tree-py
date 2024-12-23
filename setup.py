@@ -9,6 +9,7 @@ setup(
     install_requires=[
         "rich>=10.0.0",
         "psutil>=5.9.0",
+        "graphviz>=0.20.1",
     ],
     entry_points={
         "console_scripts": [
