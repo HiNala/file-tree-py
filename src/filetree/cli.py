@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 from typing import Optional, List
 from rich.console import Console
+from rich.prompt import Prompt
 
 from .core.scanner import FileTreeScanner
 from .core.duplicates import DuplicateFinder
@@ -14,14 +15,25 @@ console = Console()
 def parse_args(args=None) -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Analyze directory structure and find duplicate files"
+        description="Analyze file/directory structure and find duplicate files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  filetree                           # Run interactive prompt
+  filetree path/to/directory         # Analyze specific directory
+  filetree path/to/file.txt          # Analyze specific file
+  filetree --interactive             # Enable interactive mode for duplicates
+  filetree --export report.md        # Export report to markdown file
+  filetree --min-size 1024           # Only consider files >= 1KB
+  filetree --exclude "*.tmp" "*.log" # Exclude specific file patterns
+        """
     )
     parser.add_argument(
-        "directory",
+        "path",
         type=str,
-        help="Directory to analyze",
+        help="File or directory path to analyze (if not provided, will prompt)",
         nargs="?",
-        default="."
+        default=None
     )
     parser.add_argument(
         "--no-tree",
@@ -52,6 +64,23 @@ def parse_args(args=None) -> argparse.Namespace:
     )
     return parser.parse_args(args)
 
+def get_path_from_user() -> Path:
+    """Prompt user for a file or directory path."""
+    while True:
+        path_str = Prompt.ask(
+            "\nEnter path to analyze",
+            default="."
+        )
+        path = Path(path_str)
+        
+        if not path.exists():
+            console.print(f"[red]Path not found: {path}[/red]")
+            if not Prompt.ask("Would you like to try again?", default="y").lower().startswith("y"):
+                raise KeyboardInterrupt()
+            continue
+            
+        return path.resolve()
+
 def main(args=None) -> int:
     """Main entry point.
     
@@ -62,13 +91,15 @@ def main(args=None) -> int:
         int: Exit code (0 for success, 1 for error)
     """
     args = parse_args(args)
-    directory = Path(args.directory)
-    
-    if not directory.exists():
-        console.print(f"[red]Directory not found: {directory}[/red]")
-        return 1
     
     try:
+        # Get path from command line or prompt user
+        path = Path(args.path) if args.path else get_path_from_user()
+        
+        if not path.exists():
+            console.print(f"[red]Path not found: {path}[/red]")
+            return 1
+        
         # Initialize components
         config = Config()
         if args.exclude:
@@ -76,9 +107,9 @@ def main(args=None) -> int:
         
         scanner = FileTreeScanner(config)
         
-        # Scan directory
-        console.print("\n[bold cyan]🔍 Scanning directory...[/bold cyan]")
-        files = scanner.scan_directory(directory)
+        # Scan path
+        console.print(f"\n[bold cyan]🔍 Scanning {path.name}...[/bold cyan]")
+        files = [path] if path.is_file() else scanner.scan_directory(path)
         
         # Find duplicates
         console.print("[bold cyan]🔍 Analyzing duplicates...[/bold cyan]")
@@ -88,7 +119,7 @@ def main(args=None) -> int:
         # Generate and display report
         report_gen = ReportGenerator()
         report = report_gen.generate_report(
-            directory=directory,
+            directory=path.parent if path.is_file() else path,
             files=files,
             duplicates=duplicates,
             config=config,
@@ -118,6 +149,9 @@ def main(args=None) -> int:
         
         return 0
         
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
+        return 0
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]")
         return 1
